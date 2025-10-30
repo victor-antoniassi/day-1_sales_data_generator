@@ -2,7 +2,7 @@ version = 1
 requires-python = ">=3.11"
 
 [[package]]
-name = "neon-postgresql"
+name = "day-1-sales-data-generator"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
