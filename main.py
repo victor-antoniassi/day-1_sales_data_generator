@@ -211,7 +211,22 @@ def simulate():
         from d1_sales_simulator import start_simulation
         
         conn_string = get_connection_string()
-        start_simulation(conn_string)
+
+        try:
+            if sys.stdin.isatty():
+                num_sales_str = input("How many sales do you want to generate for D-1? ")
+            else:
+                num_sales_str = sys.stdin.readline().strip()
+
+            if not num_sales_str.isdigit() or int(num_sales_str) <= 0:
+                logger.error("Invalid input: must be a positive integer")
+                sys.exit(1)
+            num_sales = int(num_sales_str)
+        except (ValueError, EOFError):
+            logger.error("Invalid input format or no input provided.")
+            sys.exit(1)
+
+        start_simulation(conn_string, num_sales)
 
     except (ValueError, RuntimeError) as e:
         logger.error(f"A problem occurred: {e}")

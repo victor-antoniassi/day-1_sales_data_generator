@@ -108,7 +108,7 @@ def process_sales_batch(
     return results
 
 
-def start_simulation(conn_string: str) -> None:
+def start_simulation(conn_string: str, num_sales: int) -> None:
     """
     Main function to run the sales simulation.
 
@@ -116,22 +116,8 @@ def start_simulation(conn_string: str) -> None:
     and generating sales in a single transaction.
     """
     try:
-        config = dotenv_values()
-        log_level = config.get("LOG_LEVEL", "INFO").upper()
-        logger.setLevel(getattr(logging, log_level, logging.INFO))
-
         logger.info("=== D-1 Sales Simulator Starting ===")
-
-        try:
-            num_sales_str = input("How many sales do you want to generate for D-1? ")
-            if not num_sales_str.isdigit() or int(num_sales_str) <= 0:
-                logger.error("Invalid input: must be a positive integer")
-                sys.exit(1)
-            num_sales = int(num_sales_str)
-            logger.info(f"User requested {num_sales} sales")
-        except (ValueError, EOFError):
-            logger.error("Invalid input format or no input provided.")
-            sys.exit(1)
+        logger.info(f"User requested {num_sales} sales")
 
         with psycopg.connect(conn_string) as conn:
             logger.info("Database connection established")
