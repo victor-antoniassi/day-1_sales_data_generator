@@ -2,6 +2,8 @@
 
 This project is a synthetic sales data generator for the Chinook database. It's designed to simulate daily sales transactions (D-1) to provide a dynamic data source for ETL/ELT pipelines.
 
+This project is fully cross-platform and will run on Windows, macOS, and Linux.
+
 ## Features
 
 *   Generates a configurable number of sales for the previous day (D-1)
@@ -59,55 +61,42 @@ This project is a synthetic sales data generator for the Chinook database. It's 
     ```
 
 4.  **Set up the database:**
-    Run the automated setup script to prepare your database. This script will:
+    Run the automated setup command. This will:
     - Validate your configuration
     - Test database connectivity
     - Update historical invoice data to align with D-1 workflow
     - Create the `simulate_new_sale` function and required sequences
 
     ```bash
-    ./setup_database.sh
+    uv run main.py setup
     ```
 
     The setup is **idempotent** and safe to run multiple times.
 
 ## Usage
 
-### Quick Start (Recommended)
+All commands are run via the `main.py` script and are the same for Windows, macOS, and Linux.
 
-Use the provided wrapper script for the simplest experience:
+### Interactive Mode (Recommended)
+
+Run the simulator and wait for it to prompt you for the number of sales.
 
 ```bash
-./run_simulator.sh
+uv run main.py simulate
 ```
 
-The script will prompt you for the number of sales to generate.
+### Non-Interactive Mode
 
-To pass the number directly (useful for automation):
-
-```bash
-echo "10" | ./run_simulator.sh
-```
-
-### Alternative: Direct Python Execution
-
-You can also run the Python script directly:
+To pass the number of sales directly (useful for automation), you can pipe it to the command:
 
 ```bash
-uv run python d1_sales_simulator.py
-```
-
-Or with piped input:
-
-```bash
-echo "10" | uv run python d1_sales_simulator.py
+echo "10" | uv run main.py simulate
 ```
 
 ### Example Output
 
 ```
 2025-10-30 14:05:56 - __main__ - INFO - === D-1 Sales Simulator Starting ===
-2025-10-30 14:05:56 - __main__ - INFO - Connection string obtained successfully
 2025-10-30 14:05:56 - __main__ - INFO - User requested 5 sales
 2025-10-30 14:05:56 - __main__ - INFO - Database connection established
 2025-10-30 14:05:56 - __main__ - INFO - Validating database state...
@@ -115,67 +104,18 @@ echo "10" | uv run python d1_sales_simulator.py
 2025-10-30 14:05:56 - __main__ - INFO - Generating 5 random timestamps for D-1...
 2025-10-30 14:05:56 - __main__ - INFO - Processing 5 sales in single transaction...
 2025-10-30 14:05:58 - __main__ - INFO - SUCCESS: 5 sales committed to the database
-2025-10-30 14:05:58 - __main__ - INFO - Total revenue: $12.88
+2025-10-30 14:05:58 - __main__ - INFO - Total revenue: 2.88
 2025-10-30 14:05:58 - __main__ - INFO - Average sale: $2.58
-```
-
-## Expected Results
-
-When you run the simulator, you should expect:
-
-*   **Timestamps:** All sales will have timestamps within the previous day (D-1), randomly distributed across the 24-hour period.
-*   **Invoice Items:** Each invoice will contain 1-5 randomly selected items (tracks).
-*   **Calculated Totals:** Invoice totals are automatically calculated based on the sum of track prices.
-*   **Referential Integrity:** All foreign keys (customers, tracks) reference existing records in the database.
-*   **No Duplicates:** No invoice will contain duplicate tracks.
-
-## Validation
-
-After running the simulator, you can verify the results with these queries:
-
-**Count D-1 sales created:**
-```sql
-SELECT COUNT(*) as d1_invoices
-FROM "Invoice"
-WHERE "InvoiceDate" >= CURRENT_DATE - INTERVAL '1 day'
-  AND "InvoiceDate" < CURRENT_DATE;
-```
-
-**Verify invoice totals are correct:**
-```sql
-SELECT
-  i."InvoiceId",
-  i."Total" as recorded_total,
-  COALESCE(SUM(il."UnitPrice" * il."Quantity"), 0) as calculated_total
-FROM "Invoice" i
-LEFT JOIN "InvoiceLine" il ON i."InvoiceId" = il."InvoiceId"
-WHERE i."InvoiceDate" >= CURRENT_DATE - INTERVAL '1 day'
-  AND i."InvoiceDate" < CURRENT_DATE
-GROUP BY i."InvoiceId", i."Total"
-LIMIT 10;
-```
-
-**Check timestamp distribution by hour:**
-```sql
-SELECT
-  EXTRACT(HOUR FROM "InvoiceDate") as hour,
-  COUNT(*) as sales_count
-FROM "Invoice"
-WHERE "InvoiceDate" >= CURRENT_DATE - INTERVAL '1 day'
-  AND "InvoiceDate" < CURRENT_DATE
-GROUP BY EXTRACT(HOUR FROM "InvoiceDate")
-ORDER BY hour;
 ```
 
 ## Project Structure
 
 ```
 chinook_db/
-├── d1_sales_simulator.py      # Main simulator script
+├── main.py                     # Main cross-platform entrypoint (setup, simulate)
+├── d1_sales_simulator.py       # Core simulator logic
 ├── simulate_new_sale.sql       # PostgreSQL function with SEQUENCE support
 ├── update_historical_data.sql  # Idempotent historical data alignment script
-├── setup_database.sh           # Automated database setup
-├── run_simulator.sh            # Wrapper script for easy execution
 ├── .env.example                # Configuration template with documentation
 ├── .env                        # Your actual credentials (gitignored)
 ├── pyproject.toml              # Python dependencies
@@ -185,7 +125,7 @@ chinook_db/
 ## Troubleshooting
 
 **"Function 'simulate_new_sale' not found"**
-- Run the automated setup: `./setup_database.sh`
+- Run the automated setup: `uv run main.py setup`
 - Or manually: `neonctl connection-string | xargs -I {} psql {} -f simulate_new_sale.sql`
 
 **"neonctl not found"**
@@ -195,10 +135,8 @@ chinook_db/
 - Create `.env` file from `.env.example` and add your credentials
 
 **Need to reset historical data?**
-- The setup script is idempotent - if you need to re-align historical dates, you can manually run:
-  ```bash
-  neonctl connection-string | xargs -I {} psql {} -f update_historical_data.sql
-  ```
+- The setup command is idempotent. If you need to re-align historical dates, you can run it again:
+  `uv run main.py setup`
 
 **Want more detailed logs?**
 - Add `LOG_LEVEL=DEBUG` to your `.env` file
