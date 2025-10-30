@@ -58,11 +58,18 @@ This project is a synthetic sales data generator for the Chinook database. It's 
     uv sync
     ```
 
-4.  **Set up the database function:**
-    This project requires a PostgreSQL function to be created in your Chinook database. Run the following command to apply the function:
+4.  **Set up the database:**
+    Run the automated setup script to prepare your database. This script will:
+    - Validate your configuration
+    - Test database connectivity
+    - Update historical invoice data to align with D-1 workflow
+    - Create the `simulate_new_sale` function and required sequences
+
     ```bash
-    neonctl connection-string | xargs -I {} psql {} -f simulate_new_sale.sql
+    ./setup_database.sh
     ```
+
+    The setup is **idempotent** and safe to run multiple times.
 
 ## Usage
 
@@ -70,28 +77,16 @@ This project is a synthetic sales data generator for the Chinook database. It's 
 
 Use the provided wrapper script for the simplest experience:
 
-**Bash:**
 ```bash
 ./run_simulator.sh
-```
-
-**Fish:**
-```fish
-./run_simulator.fish
 ```
 
 The script will prompt you for the number of sales to generate.
 
 To pass the number directly (useful for automation):
 
-**Bash:**
 ```bash
 echo "10" | ./run_simulator.sh
-```
-
-**Fish:**
-```fish
-echo "10" | ./run_simulator.fish
 ```
 
 ### Alternative: Direct Python Execution
@@ -178,8 +173,9 @@ ORDER BY hour;
 chinook_db/
 ├── d1_sales_simulator.py      # Main simulator script
 ├── simulate_new_sale.sql       # PostgreSQL function with SEQUENCE support
-├── run_simulator.sh            # Bash wrapper script for easy execution
-├── run_simulator.fish          # Fish shell wrapper script
+├── update_historical_data.sql  # Idempotent historical data alignment script
+├── setup_database.sh           # Automated database setup
+├── run_simulator.sh            # Wrapper script for easy execution
 ├── .env.example                # Configuration template with documentation
 ├── .env                        # Your actual credentials (gitignored)
 ├── pyproject.toml              # Python dependencies
@@ -189,13 +185,20 @@ chinook_db/
 ## Troubleshooting
 
 **"Function 'simulate_new_sale' not found"**
-- Run: `neonctl connection-string | xargs -I {} psql {} -f simulate_new_sale.sql`
+- Run the automated setup: `./setup_database.sh`
+- Or manually: `neonctl connection-string | xargs -I {} psql {} -f simulate_new_sale.sql`
 
 **"neonctl not found"**
 - Install Neon CLI: [https://neon.com/docs/reference/neon-cli](https://neon.com/docs/reference/neon-cli)
 
 **"NEON_ORG_ID and NEON_PROJECT_ID must be set"**
 - Create `.env` file from `.env.example` and add your credentials
+
+**Need to reset historical data?**
+- The setup script is idempotent - if you need to re-align historical dates, you can manually run:
+  ```bash
+  neonctl connection-string | xargs -I {} psql {} -f update_historical_data.sql
+  ```
 
 **Want more detailed logs?**
 - Add `LOG_LEVEL=DEBUG` to your `.env` file
