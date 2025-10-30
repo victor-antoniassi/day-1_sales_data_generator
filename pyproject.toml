@@ -1,10 +1,16 @@
 [project]
-name = "neon-postgresql"
+name = "day-1_sales_data_generator"
 version = "0.1.0"
-description = "Add your description here"
+description = "Synthetic D-1 sales data generator for the Chinook database."
 readme = "README.md"
 requires-python = ">=3.11"
+authors = [
+  { name = "Victor Antoniassi", email = "github.finite060@slmails.com" }
+]
 dependencies = [
     "psycopg[binary]>=3.2.11",
     "python-dotenv>=1.1.1",
 ]
+
+[project.urls]
+"Repository" = "https://github.com/victor-antoniassi/day-1_sales_data_generator"
