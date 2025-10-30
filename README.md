@@ -4,17 +4,22 @@ This project is a synthetic sales data generator for the Chinook database. It's 
 
 ## Features
 
-*   Generates a configurable number of sales for the previous day (D-1).
-*   Distributes sales randomly throughout the 24-hour period.
-*   Ensures data integrity by using a single database transaction for the entire batch.
-*   Connects securely to a Neon database using `neonctl`.
+*   Generates a configurable number of sales for the previous day (D-1)
+*   Distributes sales randomly throughout the 24-hour period
+*   Ensures data integrity by using a single database transaction for the entire batch
+*   Connects securely to a Neon database using `neonctl`
+*   Structured logging with configurable log levels
+*   Database state validation before execution
+*   Concurrent-safe ID generation using PostgreSQL SEQUENCES
+*   Batch processing with performance optimizations
+*   Summary statistics (total revenue, average sale)
 
 ## Requirements
 
 *   Python 3.11+
 *   [uv](https://docs.astral.sh/uv/)
 *   [Neon CLI](https://neon.com/docs/reference/neon-cli)
-*   A running instance of the [Chinook database](https://neon.com/docs/import/import-sample-data) on Neon.
+*   A running instance of the [Chinook database](https://neon.com/docs/import/import-sample-data#chinook-database) on Neon.
 
 ## Setup
 
@@ -25,13 +30,28 @@ This project is a synthetic sales data generator for the Chinook database. It's 
     ```
 
 2.  **Create a `.env` file:**
-    Create a `.env` file in the root of the project with your Neon credentials:
+    Copy the example file and fill in your Neon credentials:
+    ```bash
+    cp .env.example .env
     ```
-    NEON_ORG_ID=<your-neon-org-id>
-    NEON_PROJECT_ID=<your-neon-project-id>
+
+    Edit `.env` and add your credentials:
     ```
-    
-    *Note:* Other `PG*` variables (e.g., `PGHOST`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`) are part of the connection string provided by Neon and are used by `neonctl`. You typically obtain these from your Neon project dashboard.
+    NEON_ORG_ID=org-your-org-id-here
+    NEON_PROJECT_ID=your-project-id-here
+    ```
+
+    Optional parameters you can configure:
+    ```
+    # Optional: specify database role (default: project default)
+    # NEON_ROLE=your_role_name
+
+    # Optional: specify branch (default: main)
+    # NEON_BRANCH=main
+
+    # Optional: logging level (default: INFO)
+    # LOG_LEVEL=DEBUG
+    ```
 
 3.  **Install dependencies:**
     ```bash
@@ -46,16 +66,62 @@ This project is a synthetic sales data generator for the Chinook database. It's 
 
 ## Usage
 
-To run the simulation, execute the following command, replacing `<number_of_sales>` with the desired amount:
+### Quick Start (Recommended)
 
+Use the provided wrapper script for the simplest experience:
+
+**Bash:**
 ```bash
-echo "<number_of_sales>" | uv run python d1_sales_simulator.py
+./run_simulator.sh
 ```
 
-For example, to generate 10 sales:
+**Fish:**
+```fish
+./run_simulator.fish
+```
+
+The script will prompt you for the number of sales to generate.
+
+To pass the number directly (useful for automation):
+
+**Bash:**
+```bash
+echo "10" | ./run_simulator.sh
+```
+
+**Fish:**
+```fish
+echo "10" | ./run_simulator.fish
+```
+
+### Alternative: Direct Python Execution
+
+You can also run the Python script directly:
+
+```bash
+uv run python d1_sales_simulator.py
+```
+
+Or with piped input:
 
 ```bash
 echo "10" | uv run python d1_sales_simulator.py
+```
+
+### Example Output
+
+```
+2025-10-30 14:05:56 - __main__ - INFO - === D-1 Sales Simulator Starting ===
+2025-10-30 14:05:56 - __main__ - INFO - Connection string obtained successfully
+2025-10-30 14:05:56 - __main__ - INFO - User requested 5 sales
+2025-10-30 14:05:56 - __main__ - INFO - Database connection established
+2025-10-30 14:05:56 - __main__ - INFO - Validating database state...
+2025-10-30 14:05:56 - __main__ - INFO - Database state validation successful
+2025-10-30 14:05:56 - __main__ - INFO - Generating 5 random timestamps for D-1...
+2025-10-30 14:05:56 - __main__ - INFO - Processing 5 sales in single transaction...
+2025-10-30 14:05:58 - __main__ - INFO - SUCCESS: 5 sales committed to the database
+2025-10-30 14:05:58 - __main__ - INFO - Total revenue: $12.88
+2025-10-30 14:05:58 - __main__ - INFO - Average sale: $2.58
 ```
 
 ## Expected Results
@@ -105,3 +171,31 @@ WHERE "InvoiceDate" >= CURRENT_DATE - INTERVAL '1 day'
 GROUP BY EXTRACT(HOUR FROM "InvoiceDate")
 ORDER BY hour;
 ```
+
+## Project Structure
+
+```
+chinook_db/
+├── d1_sales_simulator.py      # Main simulator script
+├── simulate_new_sale.sql       # PostgreSQL function with SEQUENCE support
+├── run_simulator.sh            # Bash wrapper script for easy execution
+├── run_simulator.fish          # Fish shell wrapper script
+├── .env.example                # Configuration template with documentation
+├── .env                        # Your actual credentials (gitignored)
+├── pyproject.toml              # Python dependencies
+└── README.md                   # This file
+```
+
+## Troubleshooting
+
+**"Function 'simulate_new_sale' not found"**
+- Run: `neonctl connection-string | xargs -I {} psql {} -f simulate_new_sale.sql`
+
+**"neonctl not found"**
+- Install Neon CLI: [https://neon.com/docs/reference/neon-cli](https://neon.com/docs/reference/neon-cli)
+
+**"NEON_ORG_ID and NEON_PROJECT_ID must be set"**
+- Create `.env` file from `.env.example` and add your credentials
+
+**Want more detailed logs?**
+- Add `LOG_LEVEL=DEBUG` to your `.env` file

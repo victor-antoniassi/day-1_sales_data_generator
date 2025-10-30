@@ -1,4 +1,30 @@
 -- =============================================================================
+-- SEQUENCES: Invoice and InvoiceLine ID generation
+-- =============================================================================
+--
+-- Create sequences for atomic, concurrent-safe ID generation.
+-- These sequences are initialized to start from the current maximum ID + 1.
+-- The IF NOT EXISTS clause ensures idempotency.
+--
+-- =============================================================================
+
+DO $$
+BEGIN
+    -- Create sequence for Invoice IDs if it doesn't exist
+    IF NOT EXISTS (SELECT 1 FROM pg_sequences WHERE schemaname = 'public' AND sequencename = 'invoice_id_seq') THEN
+        EXECUTE 'CREATE SEQUENCE invoice_id_seq START WITH ' ||
+                (SELECT COALESCE(MAX("InvoiceId"), 0) + 1 FROM "Invoice");
+    END IF;
+
+    -- Create sequence for InvoiceLine IDs if it doesn't exist
+    IF NOT EXISTS (SELECT 1 FROM pg_sequences WHERE schemaname = 'public' AND sequencename = 'invoice_line_id_seq') THEN
+        EXECUTE 'CREATE SEQUENCE invoice_line_id_seq START WITH ' ||
+                (SELECT COALESCE(MAX("InvoiceLineId"), 0) + 1 FROM "InvoiceLine");
+    END IF;
+END
+$$;
+
+-- =============================================================================
 -- FUNCTION: simulate_new_sale(p_invoice_date TIMESTAMP)
 -- =============================================================================
 --
@@ -20,7 +46,7 @@
 --
 -- LOGIC:
 --   1. Selects a random customer from the "Customer" table.
---   2. Determines the next available "InvoiceId" sequentially.
+--   2. Generates the next InvoiceId using a SEQUENCE (concurrent-safe).
 --   3. Inserts a new record into the "Invoice" table with a placeholder total.
 --   4. Randomly decides on a number of items for the invoice (1 to 5).
 --   5. Iteratively adds unique tracks to the "InvoiceLine" table, ensuring
@@ -49,8 +75,8 @@ BEGIN
     SELECT "CustomerId" INTO v_customer_id
     FROM "Customer" ORDER BY RANDOM() LIMIT 1;
 
-    -- Step 2: Get the next sequential InvoiceId to avoid conflicts
-    SELECT MAX("InvoiceId") + 1 INTO v_invoice_id FROM "Invoice";
+    -- Step 2: Get the next sequential InvoiceId using SEQUENCE (concurrent-safe)
+    v_invoice_id := nextval('invoice_id_seq');
 
     -- Step 3: Insert the main invoice record.
     -- The total is temporarily set to 0.00 and will be updated at the end.
@@ -86,12 +112,12 @@ BEGIN
         -- Store the added track ID to prevent duplicates in this invoice
         v_track_ids_in_invoice := array_append(v_track_ids_in_invoice, v_track_id);
 
-        -- Insert the new invoice item
+        -- Insert the new invoice item using SEQUENCE for ID generation
         INSERT INTO "InvoiceLine" (
             "InvoiceLineId", "InvoiceId", "TrackId", "UnitPrice", "Quantity"
         )
         VALUES (
-            (SELECT MAX("InvoiceLineId") + 1 FROM "InvoiceLine"), -- Next sequential ID
+            nextval('invoice_line_id_seq'), -- SEQUENCE for concurrent-safe ID generation
             v_invoice_id,
             v_track_id,
             v_unit_price,
