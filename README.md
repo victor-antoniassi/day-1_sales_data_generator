@@ -1,5 +1,10 @@
 # Chinook Sales Simulator
 
+![Python](https://img.shields.io/badge/python-3.11+-blue.svg)
+![License](https://img.shields.io/badge/license-MIT-green.svg)
+![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)
+![PostgreSQL](https://img.shields.io/badge/postgresql-16-blue.svg)
+
 A synthetic sales data generator for the Chinook database, designed to simulate realistic daily transactions for data engineering practice and portfolio projects.
 
 This project is fully cross-platform and will run on Windows, macOS, and Linux.
