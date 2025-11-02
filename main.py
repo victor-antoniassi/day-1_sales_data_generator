@@ -17,11 +17,15 @@ import subprocess
 import sys
 from typing import List
 
-from dotenv import dotenv_values
+from dotenv import load_dotenv, dotenv_values
 
-# Configure structured logging
+# Load environment variables before configuring logging
+load_dotenv()
+
+# Configure structured logging with level from .env
+log_level = os.getenv('LOG_LEVEL', 'INFO').upper()
 logging.basicConfig(
-    level=logging.INFO,
+    level=getattr(logging, log_level, logging.INFO),
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
@@ -40,23 +44,24 @@ def get_connection_string() -> str:
     Retrieves the database connection string from neonctl.
 
     This function requires the neonctl CLI to be installed and configured.
-    It reads the Neon organization and project IDs from a .env file.
+    It reads the Neon organization ID, project ID, and database name from a .env file.
 
     Returns:
         str: The database connection string.
 
     Raises:
-        ValueError: If NEON_ORG_ID or NEON_PROJECT_ID are not set in the
-                    .env file.
+        ValueError: If NEON_ORG_ID, NEON_PROJECT_ID, or NEON_DATABASE are not set
+                    in the .env file.
         RuntimeError: If neonctl is not found or fails to execute.
     """
     config = dotenv_values()
     org_id = config.get("NEON_ORG_ID")
     project_id = config.get("NEON_PROJECT_ID")
+    database = config.get("NEON_DATABASE")
 
-    if not org_id or not project_id:
+    if not org_id or not project_id or not database:
         raise ValueError(
-            "NEON_ORG_ID and NEON_PROJECT_ID must be set in the .env file."
+            "NEON_ORG_ID, NEON_PROJECT_ID, and NEON_DATABASE must be set in the .env file."
         )
 
     role = config.get("NEON_ROLE", "")
@@ -69,6 +74,8 @@ def get_connection_string() -> str:
         org_id,
         "--project-id",
         project_id,
+        "--database-name",
+        database,
     ]
     if role:
         command.extend(["--role-name", role])

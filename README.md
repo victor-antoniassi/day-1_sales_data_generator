@@ -168,7 +168,20 @@ psql --version
 
 Your first project is created with a default database called `neondb`.
 
-### Step 2: Import the Chinook Sample Database
+### Step 2: Choose Your Database Name
+
+**Important decision**: You need to choose a name for the database where Chinook data will be stored.
+
+**Recommended name**: `chinook_db` (we'll use this throughout the guide)
+
+**Why it matters**: You'll need to use this EXACT name in:
+- The database creation command below
+- The data import command
+- Your `.env` configuration file (later in Setup)
+
+**Note**: You can choose any name you prefer (e.g., `chinook`, `music_store`, `sales_db`), just be consistent everywhere.
+
+### Step 3: Import the Chinook Sample Database
 
 The Chinook database contains realistic data for a digital media store (artists, albums, tracks, customers, invoices).
 
@@ -178,22 +191,38 @@ The Chinook database contains realistic data for a digital media store (artists,
 2. Copy the connection string (it looks like: `postgresql://user:password@host/neondb`)
 3. Keep this handy — you'll need it for the next commands
 
+#### Understanding Connection Strings (Important!)
+
+Your Neon connection string has this format:
+```
+postgresql://username:password@ep-cool-name-123456.us-east-2.aws.neon.tech/neondb
+                                                                           ^^^^^^^
+                                                                      database name
+```
+
+To connect to a different database, **replace the database name** at the end:
+```
+postgresql://username:password@ep-cool-name-123456.us-east-2.aws.neon.tech/chinook_db
+                                                                           ^^^^^^^^^^
+```
+
 #### Import via Command Line
 
 ```bash
-# 1. Create the chinook database
-psql "<your-connection-string>" -c "CREATE DATABASE chinook;"
+# 1. Create the chinook_db database (using your original connection string with /neondb)
+psql "postgresql://username:password@host.neon.tech/neondb" -c "CREATE DATABASE chinook_db;"
 
 # 2. Download the official Chinook SQL file
 wget https://raw.githubusercontent.com/neondatabase/postgres-sample-dbs/main/chinook.sql
 
-# 3. Import the data (replace <your-connection-string> with your actual string)
-#    Note: Change /neondb to /chinook at the end of your connection string
-psql -d "<your-connection-string>/chinook" -f chinook.sql
+# 3. Import the data (replace /neondb with /chinook_db in your connection string)
+psql "postgresql://username:password@host.neon.tech/chinook_db" -f chinook.sql
 
 # 4. Verify the import (should return 412)
-psql "<your-connection-string>/chinook" -c 'SELECT COUNT(*) FROM "Invoice";'
+psql "postgresql://username:password@host.neon.tech/chinook_db" -c 'SELECT COUNT(*) FROM "Invoice";'
 ```
+
+**Remember**: Replace `username:password@host.neon.tech` with your actual Neon credentials.
 
 **Expected output**: `412` (number of invoices in the sample data)
 
@@ -201,9 +230,12 @@ psql "<your-connection-string>/chinook" -c 'SELECT COUNT(*) FROM "Invoice";'
 - If `wget` is not installed, download the file manually from the URL in step 2
 - On Windows without `wget`, use: `curl -O https://raw.githubusercontent.com/neondatabase/postgres-sample-dbs/main/chinook.sql`
 
-### Step 3: Get Your Neon Credentials
+### Step 4: Get Your Neon Credentials
 
-You'll need two IDs to configure this project:
+You'll need three values to configure this project:
+- **NEON_ORG_ID**: Your organization ID
+- **NEON_PROJECT_ID**: Your project ID
+- **NEON_DATABASE**: The database name you chose in Step 2 (e.g., `chinook_db`)
 
 #### Finding Your Organization ID (NEON_ORG_ID)
 
@@ -247,16 +279,20 @@ neonctl projects list
     ```
 
 2.  **Create a `.env` file:**
-    Copy the example file and fill in your Neon credentials (from [Step 3](#step-3-get-your-neon-credentials) above):
+    Copy the example file and fill in your Neon credentials (from [Step 4](#step-4-get-your-neon-credentials) above):
     ```bash
     cp .env.example .env
+    # Windows (CMD) users: use 'copy' instead of 'cp'
     ```
 
     Edit `.env` and add the credentials you found earlier:
     ```
     NEON_ORG_ID=org-your-actual-org-id
     NEON_PROJECT_ID=your-actual-project-id
+    NEON_DATABASE=chinook_db
     ```
+
+    **Critical**: The `NEON_DATABASE` value MUST match the database name you created in [Step 2](#step-2-choose-your-database-name). If you used a different name than `chinook_db`, use that name here.
 
     **Reminder**: See [Finding Your Organization ID](#finding-your-organization-id-neon_org_id) and [Finding Your Project ID](#finding-your-project-id-neon_project_id) if you skipped those steps.
 
