@@ -382,12 +382,23 @@ Enter the number of INSERTS, UPDATES, and DELETES for D-1 (e.g., '100 5 2'): 100
 2025-11-12 10:30:09 - d1_sales_simulator - INFO - Average new sale: $1.02
 ```
 
+## Verifying Simulation Results
+
+After running the simulation, you can verify the generated data using the `verify_simulation.py` script. This script connects to your database and checks for D-1 invoices, ensuring data integrity and consistency.
+
+```bash
+uv run verify_simulation.py
+```
+
+The script will output information about the number of new invoices created on D-1 and check for invoices with multiple lines (potential updates/multi-item inserts), verifying their totals.
+
 ## Project Structure
 
 ```
 chinook_db/
 ├── main.py                     # Main cross-platform entrypoint (setup, simulate)
 ├── d1_sales_simulator.py       # Core simulator logic
+├── verify_simulation.py        # Script to verify simulation results
 ├── simulate_new_sale.sql       # PostgreSQL function for INSERTS
 ├── simulate_modifications.sql  # PostgreSQL functions for UPDATES and DELETES
 ├── update_historical_data.sql  # Idempotent historical data alignment script
