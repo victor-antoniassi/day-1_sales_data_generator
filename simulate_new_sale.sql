@@ -12,15 +12,19 @@ DO $$
 BEGIN
     -- Create sequence for Invoice IDs if it doesn't exist
     IF NOT EXISTS (SELECT 1 FROM pg_sequences WHERE schemaname = 'public' AND sequencename = 'invoice_id_seq') THEN
-        EXECUTE 'CREATE SEQUENCE invoice_id_seq START WITH ' ||
-                (SELECT COALESCE(MAX("InvoiceId"), 0) + 1 FROM "Invoice");
+        EXECUTE 'CREATE SEQUENCE invoice_id_seq START WITH 1'; -- Start with 1, will be adjusted below
     END IF;
+    -- Always restart the sequence to ensure it's greater than MAX("InvoiceId")
+    EXECUTE 'ALTER SEQUENCE invoice_id_seq RESTART WITH ' ||
+            (SELECT COALESCE(MAX("InvoiceId"), 0) + 1 FROM "Invoice");
 
     -- Create sequence for InvoiceLine IDs if it doesn't exist
     IF NOT EXISTS (SELECT 1 FROM pg_sequences WHERE schemaname = 'public' AND sequencename = 'invoice_line_id_seq') THEN
-        EXECUTE 'CREATE SEQUENCE invoice_line_id_seq START WITH ' ||
-                (SELECT COALESCE(MAX("InvoiceLineId"), 0) + 1 FROM "InvoiceLine");
+        EXECUTE 'CREATE SEQUENCE invoice_line_id_seq START WITH 1'; -- Start with 1, will be adjusted below
     END IF;
+    -- Always restart the sequence to ensure it's greater than MAX("InvoiceLineId")
+    EXECUTE 'ALTER SEQUENCE invoice_line_id_seq RESTART WITH ' ||
+            (SELECT COALESCE(MAX("InvoiceLineId"), 0) + 1 FROM "InvoiceLine");
 END
 $$;
 

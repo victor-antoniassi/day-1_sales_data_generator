@@ -130,7 +130,7 @@ def setup():
     logger.info(f"{BLUE}============================================================={NC}\n")
 
     # 1. Check for .env file
-    logger.info(f"{YELLOW}[1/5] Checking configuration...{NC}")
+    logger.info(f"{YELLOW}[1/7] Checking configuration...{NC}")
     if not os.path.exists('.env'):
         logger.error(f"{RED}ERROR: .env file not found!{NC}")
         logger.info("Please create a .env file based on .env.example and add your credentials.")
@@ -138,7 +138,7 @@ def setup():
     logger.info(f"{GREEN}✓ Configuration file found{NC}\n")
 
     # 2. Check for neonctl
-    logger.info(f"{YELLOW}[2/5] Checking neonctl CLI...{NC}")
+    logger.info(f"{YELLOW}[2/7] Checking neonctl CLI...{NC}")
     if not shutil.which('neonctl'):
         logger.error(f"{RED}ERROR: neonctl not found!{NC}")
         logger.info("Please install neonctl: https://neon.com/docs/reference/neon-cli")
@@ -146,7 +146,7 @@ def setup():
     logger.info(f"{GREEN}✓ neonctl CLI found{NC}\n")
 
     # 3. Test database connection
-    logger.info(f"{YELLOW}[3/5] Testing database connection...{NC}")
+    logger.info(f"{YELLOW}[3/7] Testing database connection...{NC}")
     try:
         conn_string = get_connection_string()
         run_psql_command(conn_string, command="SELECT 1;", quiet=True)
@@ -157,7 +157,7 @@ def setup():
         sys.exit(1)
 
     # 4. Update historical data
-    logger.info(f"{YELLOW}[4/5] Updating historical invoice data...{NC}")
+    logger.info(f"{YELLOW}[4/7] Updating historical invoice data...{NC}")
     try:
         result = run_psql_command(conn_string, file_path='update_historical_data.sql')
         # psql -f sends output to stdout, so we log it.
@@ -170,31 +170,53 @@ def setup():
         sys.exit(1)
 
     # 5. Create simulate_new_sale function
-    logger.info(f"{YELLOW}[5/5] Creating simulate_new_sale function and sequences...{NC}")
+    logger.info(f"{YELLOW}[5/7] Creating simulate_new_sale function and sequences...{NC}")
     try:
         result = run_psql_command(conn_string, file_path='simulate_new_sale.sql')
         for line in result.stdout.splitlines():
             logger.info(line)
-        logger.info(f"{GREEN}✓ Function and sequences created successfully{NC}\n")
+        logger.info(f"{GREEN}✓ INSERT function and sequences created successfully{NC}\n")
     except (RuntimeError, subprocess.CalledProcessError) as e:
-        logger.error(f"{RED}ERROR: Failed to create function.{NC}")
+        logger.error(f"{RED}ERROR: Failed to create INSERT function.{NC}")
+        logger.error(e.stderr)
+        sys.exit(1)
+
+    # 6. Create modification functions
+    logger.info(f"{YELLOW}[6/7] Creating simulation modification functions (UPDATE/DELETE)...{NC}")
+    try:
+        result = run_psql_command(conn_string, file_path='simulate_modifications.sql')
+        for line in result.stdout.splitlines():
+            logger.info(line)
+        logger.info(f"{GREEN}✓ UPDATE/DELETE functions created successfully{NC}\n")
+    except (RuntimeError, subprocess.CalledProcessError) as e:
+        logger.error(f"{RED}ERROR: Failed to create modification functions.{NC}")
         logger.error(e.stderr)
         sys.exit(1)
         
-    # Verify installation
-    logger.info(f"{YELLOW}Verifying installation...{NC}")
+    # 7. Verify installation
+    logger.info(f"{YELLOW}[7/7] Verifying all simulation functions...{NC}")
     try:
-        result = run_psql_command(
-            conn_string, 
-            command="SELECT COUNT(*) FROM information_schema.routines WHERE routine_schema = 'public' AND routine_name = 'simulate_new_sale';",
-            quiet=True
-        )
-        count = int(result.stdout.strip())
-        if count == 1:
-            logger.info(f"{GREEN}✓ simulate_new_sale function verified{NC}\n")
+        # Check for all three functions
+        sql_verify_all = """
+        SELECT routine_name
+        FROM information_schema.routines
+        WHERE routine_schema = 'public'
+        AND routine_name IN ('simulate_new_sale', 'simulate_update_sale', 'simulate_delete_sale');
+        """
+        result = run_psql_command(conn_string, command=sql_verify_all, quiet=True)
+        found_functions = set(result.stdout.strip().split())
+        
+        required_functions = {'simulate_new_sale', 'simulate_update_sale', 'simulate_delete_sale'}
+        
+        if found_functions == required_functions:
+            for func in sorted(list(found_functions)):
+                logger.info(f"{GREEN}✓ {func} function verified{NC}")
+            logger.info(f"{GREEN}✓ All simulation functions verified successfully{NC}\n")
         else:
-            logger.error(f"{RED}⨯ Function verification failed. Count was {count}{NC}")
+            missing = required_functions - found_functions
+            logger.error(f"{RED}⨯ Function verification failed. Missing: {', '.join(missing)}{NC}")
             sys.exit(1)
+            
     except (subprocess.CalledProcessError, ValueError) as e:
         logger.error(f"{RED}⨯ Function verification failed.{NC}")
         logger.error(e)
@@ -221,19 +243,27 @@ def simulate():
 
         try:
             if sys.stdin.isatty():
-                num_sales_str = input("How many sales do you want to generate for D-1? ")
+                prompt = "Enter the number of INSERTS, UPDATES, and DELETES for D-1 (e.g., '100 5 2'): "
+                user_input = input(prompt)
             else:
-                num_sales_str = sys.stdin.readline().strip()
+                user_input = sys.stdin.readline().strip()
 
-            if not num_sales_str.isdigit() or int(num_sales_str) <= 0:
-                logger.error("Invalid input: must be a positive integer")
-                sys.exit(1)
-            num_sales = int(num_sales_str)
-        except (ValueError, EOFError):
-            logger.error("Invalid input format or no input provided.")
+            parts = user_input.split()
+            if len(parts) != 3:
+                raise ValueError("Invalid input: Please provide three numbers for inserts, updates, and deletes.")
+
+            num_inserts = int(parts[0])
+            num_updates = int(parts[1])
+            num_deletes = int(parts[2])
+
+            if num_inserts < 0 or num_updates < 0 or num_deletes < 0:
+                raise ValueError("Invalid input: all numbers must be zero or positive.")
+
+        except (ValueError, EOFError) as e:
+            logger.error(f"Invalid input: {e}")
             sys.exit(1)
 
-        start_simulation(conn_string, num_sales)
+        start_simulation(conn_string, num_inserts, num_updates, num_deletes)
 
     except (ValueError, RuntimeError) as e:
         logger.error(f"A problem occurred: {e}")
