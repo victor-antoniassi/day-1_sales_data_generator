@@ -58,19 +58,15 @@ This project is the **data source** — the starting point for building complete
 
 ## Features
 
-*   Generates a configurable number of **inserts, updates, and deletes** for the previous day (D-1)
-*   Simulates realistic transaction types:
-    *   **Inserts**: New sales with 1 to 5 items.
-    *   **Updates**: Adds a new track to an existing D-1 invoice.
-    *   **Deletes**: Cancels a D-1 invoice by setting its total to 0 and removing its items.
-*   Distributes new sales randomly throughout the 24-hour period
+*   Generates a configurable number of sales for the previous day (D-1)
+*   Distributes sales randomly throughout the 24-hour period
 *   Ensures data integrity by using a single database transaction for the entire batch
 *   Connects securely to a Neon database using `neonctl`
 *   Structured logging with configurable log levels
 *   Database state validation before execution
 *   Concurrent-safe ID generation using PostgreSQL SEQUENCES
 *   Batch processing with performance optimizations
-*   Summary statistics (total revenue, average sale for new invoices)
+*   Summary statistics (total revenue, average sale)
 
 ## Prerequisites - First Time Setup
 
@@ -320,9 +316,10 @@ neonctl projects list
 
 4.  **Set up the database:**
     Run the automated setup command. This will:
-    - Validate your configuration and test connectivity
+    - Validate your configuration
+    - Test database connectivity
     - Update historical invoice data to align with D-1 workflow
-    - Create all required simulation functions (`INSERT`, `UPDATE`, `DELETE`) and sequences
+    - Create the `simulate_new_sale` function and required sequences
 
     ```bash
     uv run main.py setup
@@ -332,54 +329,37 @@ neonctl projects list
 
 ## Usage
 
-All commands are run via the `main.py` script. The simulator now supports generating a mix of inserts, updates, and deletes in a single run.
-
-The script will prompt you to enter three numbers separated by spaces:
-1.  Number of **new sales** (Inserts)
-2.  Number of **sale updates** (Updates)
-3.  Number of **sale cancellations** (Deletes)
+All commands are run via the `main.py` script and are the same for Windows, macOS, and Linux.
 
 ### Interactive Mode (Recommended)
 
-Run the simulator and wait for it to prompt you for input.
+Run the simulator and wait for it to prompt you for the number of sales.
 
 ```bash
 uv run main.py simulate
 ```
 
-You will see a prompt like this. Enter three numbers and press Enter:
-```
-Enter the number of INSERTS, UPDATES, and DELETES for D-1 (e.g., '100 5 2'): 100 5 2
-```
-
 ### Non-Interactive Mode
 
-To pass the numbers directly (useful for automation), you can `echo` a string with the three values and pipe it to the command.
+To pass the number of sales directly (useful for automation), you can pipe it to the command:
 
 ```bash
-# Format: "INSERTS UPDATES DELETES"
-echo "100 5 2" | uv run main.py simulate
+echo "10" | uv run main.py simulate
 ```
 
 ### Example Output
 
 ```
-2025-11-12 10:30:00 - __main__ - INFO - === D-1 Sales Simulator Starting ===
-Enter the number of INSERTS, UPDATES, and DELETES for D-1 (e.g., '100 5 2'): 100 5 2
-2025-11-12 10:30:05 - d1_sales_simulator - INFO - Database connection established
-2025-11-12 10:30:05 - d1_sales_simulator - INFO - Validating database state...
-2025-11-12 10:30:05 - d1_sales_simulator - INFO - Database state validation successful
-2025-11-12 10:30:05 - d1_sales_simulator - INFO - Starting batch operation in a SINGLE TRANSACTION...
-2025-11-12 10:30:05 - d1_sales_simulator - INFO - Starting batch operation for D-1 (2025-11-11)
-2025-11-12 10:30:05 - d1_sales_simulator - INFO - Requested: 100 Inserts, 5 Updates, 2 Deletes
-2025-11-12 10:30:05 - d1_sales_simulator - INFO - Processing 2 DELETES...
-2025-11-12 10:30:06 - d1_sales_simulator - INFO - Processing 5 UPDATES...
-2025-11-12 10:30:07 - d1_sales_simulator - INFO - Processing 100 INSERTS...
-2025-11-12 10:30:09 - d1_sales_simulator - INFO - Batch successfully prepared. Committing transaction...
-2025-11-12 10:30:09 - d1_sales_simulator - INFO - SUCCESS: All operations committed to the database.
-2025-11-12 10:30:09 - d1_sales_simulator - INFO - Summary: 100 new sales inserted, 5 updated, 2 deleted.
-2025-11-12 10:30:09 - d1_sales_simulator - INFO - Total new revenue: $101.97
-2025-11-12 10:30:09 - d1_sales_simulator - INFO - Average new sale: $1.02
+2025-10-30 14:05:56 - __main__ - INFO - === D-1 Sales Simulator Starting ===
+2025-10-30 14:05:56 - __main__ - INFO - User requested 5 sales
+2025-10-30 14:05:56 - __main__ - INFO - Database connection established
+2025-10-30 14:05:56 - __main__ - INFO - Validating database state...
+2025-10-30 14:05:56 - __main__ - INFO - Database state validation successful
+2025-10-30 14:05:56 - __main__ - INFO - Generating 5 random timestamps for D-1...
+2025-10-30 14:05:56 - __main__ - INFO - Processing 5 sales in single transaction...
+2025-10-30 14:05:58 - __main__ - INFO - SUCCESS: 5 sales committed to the database
+2025-10-30 14:05:58 - __main__ - INFO - Total revenue: 2.88
+2025-10-30 14:05:58 - __main__ - INFO - Average sale: $2.58
 ```
 
 ## Project Structure
@@ -388,8 +368,7 @@ Enter the number of INSERTS, UPDATES, and DELETES for D-1 (e.g., '100 5 2'): 100
 chinook_db/
 ├── main.py                     # Main cross-platform entrypoint (setup, simulate)
 ├── d1_sales_simulator.py       # Core simulator logic
-├── simulate_new_sale.sql       # PostgreSQL function for INSERTS
-├── simulate_modifications.sql  # PostgreSQL functions for UPDATES and DELETES
+├── simulate_new_sale.sql       # PostgreSQL function with SEQUENCE support
 ├── update_historical_data.sql  # Idempotent historical data alignment script
 ├── .env.example                # Configuration template with documentation
 ├── .env                        # Your actual credentials (gitignored)
@@ -417,9 +396,9 @@ Quick reference for technical terms used in this project:
 
 ## Troubleshooting
 
-**"Function 'simulate_new_sale' not found" (or update/delete function)**
-- Your database setup is likely incomplete or outdated. Run the automated setup again:
-  `uv run main.py setup`
+**"Function 'simulate_new_sale' not found"**
+- Run the automated setup: `uv run main.py setup`
+- Or manually: `neonctl connection-string | xargs -I {} psql {} -f simulate_new_sale.sql`
 
 **"neonctl not found"**
 - Install Neon CLI: `npm i -g neonctl`
