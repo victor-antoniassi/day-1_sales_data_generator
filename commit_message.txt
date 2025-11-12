@@ -1,8 +1,0 @@
-docs: Update README and Gemini context for new simulation features
-
-- Atualiza o README.md para refletir a capacidade de simular inserts, updates e deletes.
-- Adiciona `simulate_modifications.sql` à estrutura do projeto no README.md.
-- Atualiza a seção de uso no README.md para o novo formato de entrada do comando `simulate` (inserts, updates, deletes).
-- Atualiza o .gemini/GEMINI.md para descrever as funções de update e delete.
-- Ajusta os requisitos funcionais e a seção de implementação atual no .gemini/GEMINI.md.
-- Atualiza o exemplo de execução da simulação no .gemini/GEMINI.md.
