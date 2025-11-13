@@ -7,8 +7,11 @@ from typing import Tuple
 import psycopg
 from dotenv import load_dotenv, dotenv_values
 
-# Load environment variables
-load_dotenv()
+# Determine project root directory (parent of src/)
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# Load environment variables from project root
+load_dotenv(os.path.join(PROJECT_ROOT, '.env'))
 
 # Configure logging
 logging.basicConfig(
@@ -23,7 +26,7 @@ def get_connection_string() -> str:
     Retrieves the database connection string from neonctl.
     (Replicated from main.py for self-containment)
     """
-    config = dotenv_values()
+    config = dotenv_values(os.path.join(PROJECT_ROOT, '.env'))
     org_id = config.get("NEON_ORG_ID")
     project_id = config.get("NEON_PROJECT_ID")
     database = config.get("NEON_DATABASE")

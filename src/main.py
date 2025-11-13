@@ -19,8 +19,11 @@ from typing import List
 
 from dotenv import load_dotenv, dotenv_values
 
-# Load environment variables before configuring logging
-load_dotenv()
+# Determine project root directory (parent of src/)
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# Load environment variables from project root before configuring logging
+load_dotenv(os.path.join(PROJECT_ROOT, '.env'))
 
 # Configure structured logging with level from .env
 log_level = os.getenv('LOG_LEVEL', 'INFO').upper()
@@ -54,7 +57,7 @@ def get_connection_string() -> str:
                     in the .env file.
         RuntimeError: If neonctl is not found or fails to execute.
     """
-    config = dotenv_values()
+    config = dotenv_values(os.path.join(PROJECT_ROOT, '.env'))
     org_id = config.get("NEON_ORG_ID")
     project_id = config.get("NEON_PROJECT_ID")
     database = config.get("NEON_DATABASE")
@@ -130,15 +133,16 @@ def setup():
     logger.info(f"{BLUE}============================================================={NC}\n")
 
     # 1. Check for .env file
-    logger.info(f"{YELLOW}[1/7] Checking configuration...{NC}")
-    if not os.path.exists('.env'):
+    logger.info(f"{YELLOW}[1/6] Checking configuration...{NC}")
+    env_path = os.path.join(PROJECT_ROOT, '.env')
+    if not os.path.exists(env_path):
         logger.error(f"{RED}ERROR: .env file not found!{NC}")
         logger.info("Please create a .env file based on .env.example and add your credentials.")
         sys.exit(1)
     logger.info(f"{GREEN}✓ Configuration file found{NC}\n")
 
     # 2. Check for neonctl
-    logger.info(f"{YELLOW}[2/7] Checking neonctl CLI...{NC}")
+    logger.info(f"{YELLOW}[2/6] Checking neonctl CLI...{NC}")
     if not shutil.which('neonctl'):
         logger.error(f"{RED}ERROR: neonctl not found!{NC}")
         logger.info("Please install neonctl: https://neon.com/docs/reference/neon-cli")
@@ -146,7 +150,7 @@ def setup():
     logger.info(f"{GREEN}✓ neonctl CLI found{NC}\n")
 
     # 3. Test database connection
-    logger.info(f"{YELLOW}[3/7] Testing database connection...{NC}")
+    logger.info(f"{YELLOW}[3/6] Testing database connection...{NC}")
     try:
         conn_string = get_connection_string()
         run_psql_command(conn_string, command="SELECT 1;", quiet=True)
@@ -157,9 +161,9 @@ def setup():
         sys.exit(1)
 
     # 4. Update historical data
-    logger.info(f"{YELLOW}[4/7] Updating historical invoice data...{NC}")
+    logger.info(f"{YELLOW}[4/6] Updating historical invoice data...{NC}")
     try:
-        result = run_psql_command(conn_string, file_path='update_historical_data.sql')
+        result = run_psql_command(conn_string, file_path='sql/update_historical_data.sql')
         # psql -f sends output to stdout, so we log it.
         for line in result.stdout.splitlines():
             logger.info(line)
@@ -169,32 +173,20 @@ def setup():
         logger.error(e.stderr)
         sys.exit(1)
 
-    # 5. Create simulate_new_sale function
-    logger.info(f"{YELLOW}[5/7] Creating simulate_new_sale function and sequences...{NC}")
+    # 5. Create all simulation functions
+    logger.info(f"{YELLOW}[5/6] Creating all simulation functions (sequences + INSERT/UPDATE/DELETE)...{NC}")
     try:
-        result = run_psql_command(conn_string, file_path='simulate_new_sale.sql')
+        result = run_psql_command(conn_string, file_path='sql/simulation_functions.sql')
         for line in result.stdout.splitlines():
             logger.info(line)
-        logger.info(f"{GREEN}✓ INSERT function and sequences created successfully{NC}\n")
+        logger.info(f"{GREEN}✓ All simulation functions and sequences created successfully{NC}\n")
     except (RuntimeError, subprocess.CalledProcessError) as e:
-        logger.error(f"{RED}ERROR: Failed to create INSERT function.{NC}")
+        logger.error(f"{RED}ERROR: Failed to create simulation functions.{NC}")
         logger.error(e.stderr)
         sys.exit(1)
 
-    # 6. Create modification functions
-    logger.info(f"{YELLOW}[6/7] Creating simulation modification functions (UPDATE/DELETE)...{NC}")
-    try:
-        result = run_psql_command(conn_string, file_path='simulate_modifications.sql')
-        for line in result.stdout.splitlines():
-            logger.info(line)
-        logger.info(f"{GREEN}✓ UPDATE/DELETE functions created successfully{NC}\n")
-    except (RuntimeError, subprocess.CalledProcessError) as e:
-        logger.error(f"{RED}ERROR: Failed to create modification functions.{NC}")
-        logger.error(e.stderr)
-        sys.exit(1)
-        
-    # 7. Verify installation
-    logger.info(f"{YELLOW}[7/7] Verifying all simulation functions...{NC}")
+    # 6. Verify installation
+    logger.info(f"{YELLOW}[6/6] Verifying all simulation functions...{NC}")
     try:
         # Check for all three functions
         sql_verify_all = """
@@ -226,14 +218,15 @@ def setup():
     logger.info(f"{GREEN}✓ DATABASE SETUP COMPLETE!{NC}")
     logger.info(f"{BLUE}============================================================={NC}\n")
     logger.info("You can now run the sales simulator:")
-    logger.info("  uv run main.py simulate")
+    logger.info("  uv run src/main.py simulate")
 
 
 def simulate():
     """Orchestrates the execution of the sales simulator."""
-    if not os.path.exists('.env'):
+    env_path = os.path.join(PROJECT_ROOT, '.env')
+    if not os.path.exists(env_path):
         logger.error(f"{RED}ERROR: .env file not found!{NC}")
-        logger.info("Please run 'uv run main.py setup' first.")
+        logger.info("Please run 'uv run src/main.py setup' first.")
         sys.exit(1)
     
     try:

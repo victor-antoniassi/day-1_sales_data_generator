@@ -56,21 +56,30 @@ This project is the **data source** — the starting point for building complete
 
 ---
 
-## Features
+## Technical Features
 
-*   Generates a configurable number of **inserts, updates, and deletes** for the previous day (D-1)
-*   Simulates realistic transaction types:
-    *   **Inserts**: New sales with 1 to 5 items.
-    *   **Updates**: Adds a new track to an existing D-1 invoice.
-    *   **Deletes**: Cancels a D-1 invoice by setting its total to 0 and removing its items.
-*   Distributes new sales randomly throughout the 24-hour period
-*   Ensures data integrity by using a single database transaction for the entire batch
-*   Connects securely to a Neon database using `neonctl`
-*   Structured logging with configurable log levels
-*   Database state validation before execution
-*   Concurrent-safe ID generation using PostgreSQL SEQUENCES
-*   Batch processing with performance optimizations
-*   Summary statistics (total revenue, average sale for new invoices)
+### Data Generation
+*   **Configurable batch operations**: Generates user-specified volumes of inserts, updates, and deletes
+*   **Realistic transaction simulation**:
+    *   **Inserts**: Multi-item sales (1-5 tracks) with random customer and product selection, timestamped in D-1
+    *   **Updates**: Adds additional items to random invoices from last 90 days while recalculating totals
+    *   **Deletes**: Complete invoice cancellations from last 90 days with cascading line item removal
+*   **90-day modification window**: Updates and deletes operate on recent invoices only, simulating real-world return and cancellation policies
+*   **Temporal distribution**: Random timestamp generation across 24-hour period for new sales maintains realistic data patterns
+*   **Late-arriving changes**: Historical modifications within 90-day window create realistic data pipeline challenges
+
+### Database Architecture
+*   **ACID compliance**: All operations execute within a single atomic transaction (commit or rollback)
+*   **Concurrent-safe ID generation**: PostgreSQL SEQUENCE objects prevent ID collisions in multi-process scenarios
+*   **Referential integrity**: Foreign key constraints enforced across Invoice, InvoiceLine, Customer, and Track tables
+*   **Idempotent setup**: Database initialization scripts safely re-runnable without data corruption
+
+### Engineering Practices
+*   **Secure credential management**: Database connections via `neonctl` CLI, zero hardcoded passwords
+*   **Structured logging**: Configurable log levels (DEBUG/INFO/WARNING/ERROR) with ISO timestamps
+*   **Database state validation**: Pre-execution checks verify existence of required functions and sequences
+*   **Performance optimization**: Batch processing with progress tracking and summary statistics
+*   **Cross-platform compatibility**: Runs on Windows, macOS, and Linux without modifications
 
 ## Prerequisites - First Time Setup
 
@@ -325,16 +334,16 @@ neonctl projects list
     - Create all required simulation functions (`INSERT`, `UPDATE`, `DELETE`) and sequences
 
     ```bash
-    uv run main.py setup
+    uv run src/main.py setup
     ```
 
     The setup is **idempotent** and safe to run multiple times.
 
 ## Usage
 
-All commands are run via the `main.py` script. The simulator now supports generating a mix of inserts, updates, and deletes in a single run.
+All commands are run via the `src/main.py` script. The simulator supports generating a mix of inserts, updates, and deletes in a single execution.
 
-The script will prompt you to enter three numbers separated by spaces:
+The script prompts for three space-separated integers:
 1.  Number of **new sales** (Inserts)
 2.  Number of **sale updates** (Updates)
 3.  Number of **sale cancellations** (Deletes)
@@ -344,7 +353,7 @@ The script will prompt you to enter three numbers separated by spaces:
 Run the simulator and wait for it to prompt you for input.
 
 ```bash
-uv run main.py simulate
+uv run src/main.py simulate
 ```
 
 You will see a prompt like this. Enter three numbers and press Enter:
@@ -358,7 +367,7 @@ To pass the numbers directly (useful for automation), you can `echo` a string wi
 
 ```bash
 # Format: "INSERTS UPDATES DELETES"
-echo "100 5 2" | uv run main.py simulate
+echo "100 5 2" | uv run src/main.py simulate
 ```
 
 ### Example Output
@@ -387,26 +396,47 @@ Enter the number of INSERTS, UPDATES, and DELETES for D-1 (e.g., '100 5 2'): 100
 After running the simulation, you can verify the generated data using the `verify_simulation.py` script. This script connects to your database and checks for D-1 invoices, ensuring data integrity and consistency.
 
 ```bash
-uv run verify_simulation.py
+uv run src/verify_simulation.py
 ```
 
 The script will output information about the number of new invoices created on D-1 and check for invoices with multiple lines (potential updates/multi-item inserts), verifying their totals.
 
-## Project Structure
+## Architecture & Implementation
+
+### Project Structure
 
 ```
 chinook_db/
-├── main.py                     # Main cross-platform entrypoint (setup, simulate)
-├── d1_sales_simulator.py       # Core simulator logic
-├── verify_simulation.py        # Script to verify simulation results
-├── simulate_new_sale.sql       # PostgreSQL function for INSERTS
-├── simulate_modifications.sql  # PostgreSQL functions for UPDATES and DELETES
-├── update_historical_data.sql  # Idempotent historical data alignment script
-├── .env.example                # Configuration template with documentation
-├── .env                        # Your actual credentials (gitignored)
-├── pyproject.toml              # Python dependencies
-└── README.md                   # This file
+├── src/                              # Python application layer
+│   ├── main.py                       # CLI interface and orchestration
+│   ├── d1_sales_simulator.py         # Core simulation engine
+│   └── verify_simulation.py          # Data validation utility
+├── sql/                              # Database schema layer
+│   ├── simulation_functions.sql      # PL/pgSQL stored procedures (DML)
+│   └── update_historical_data.sql    # Historical data alignment (DDL)
+├── .env.example                      # Configuration template
+├── .env                              # Environment variables (gitignored)
+├── pyproject.toml                    # Python dependencies & metadata
+└── README.md                         # Documentation
 ```
+
+### Design Decisions
+
+**Separation of Concerns**:
+- **Python layer**: Orchestration, CLI interface, connection management, and transaction control
+- **PostgreSQL layer**: Business logic encapsulated in stored procedures for performance and atomicity
+
+**Why PL/pgSQL Functions?**
+- **Performance**: Minimizes network round-trips; all data manipulation occurs server-side
+- **Atomicity**: Database enforces transactional guarantees at the storage layer
+- **Concurrent safety**: SEQUENCE objects provide lock-free ID generation
+- **Maintainability**: Business logic versioned alongside schema in SQL files
+
+**Technology Choices**:
+- **PostgreSQL 16**: Advanced ACID compliance, mature MVCC, robust constraint enforcement
+- **Neon**: Serverless PostgreSQL with connection pooling and auto-scaling capabilities
+- **Python 3.11+**: Type hints, improved error messages, performance enhancements
+- **uv package manager**: 10-100x faster than pip with deterministic dependency resolution
 
 ## Glossary
 
@@ -430,7 +460,7 @@ Quick reference for technical terms used in this project:
 
 **"Function 'simulate_new_sale' not found" (or update/delete function)**
 - Your database setup is likely incomplete or outdated. Run the automated setup again:
-  `uv run main.py setup`
+  `uv run src/main.py setup`
 
 **"neonctl not found"**
 - Install Neon CLI: `npm i -g neonctl`
@@ -446,7 +476,7 @@ Quick reference for technical terms used in this project:
 
 **Need to reset historical data?**
 - The setup command is idempotent. If you need to re-align historical dates, you can run it again:
-  `uv run main.py setup`
+  `uv run src/main.py setup`
 
 **Want more detailed logs?**
 - Add `LOG_LEVEL=DEBUG` to your `.env` file

@@ -1,4 +1,18 @@
 -- =============================================================================
+-- SIMULATION FUNCTIONS: Complete SQL setup for D-1 sales data generation
+-- =============================================================================
+--
+-- This file contains all the database logic needed to simulate sales
+-- transactions for the D-1 (Day-1) batch data pipeline:
+--
+-- 1. Sequences for atomic ID generation
+-- 2. simulate_new_sale() - Creates new invoices (INSERT operations)
+-- 3. simulate_update_sale() - Adds tracks to existing invoices (UPDATE operations)
+-- 4. simulate_delete_sale() - Removes invoices (DELETE operations)
+--
+-- =============================================================================
+
+-- =============================================================================
 -- SEQUENCES: Invoice and InvoiceLine ID generation
 -- =============================================================================
 --
@@ -140,5 +154,139 @@ BEGIN
     -- Step 7: Return the generated Invoice ID and Total for logging
     RETURN QUERY SELECT v_invoice_id, v_total_price;
 
+END;
+$$ LANGUAGE plpgsql;
+
+-- =============================================================================
+-- FUNCTION: simulate_update_sale(simulation_date TIMESTAMP)
+-- =============================================================================
+--
+-- DESCRIPTION:
+--   Simulates updating an existing invoice by adding a new track to it.
+--   This represents a customer adding an additional item to their order.
+--   Operates on invoices within a 90-day window, simulating real-world
+--   return and order modification policies.
+--
+-- PARAMETERS:
+--   simulation_date (TIMESTAMP): Not used for filtering (kept for API compatibility).
+--
+-- RETURNS:
+--   VOID
+--
+-- LOGIC:
+--   1. Selects a random invoice from the last 90 days.
+--   2. Selects a random track not already in that invoice.
+--   3. Adds the track as a new InvoiceLine.
+--   4. Recalculates and updates the invoice total.
+--
+-- =============================================================================
+
+CREATE OR REPLACE FUNCTION simulate_update_sale(simulation_date TIMESTAMP)
+RETURNS VOID AS $$
+DECLARE
+    target_invoice_id INT;
+    new_track_id INT;
+    new_track_price NUMERIC(10, 2);
+    new_invoice_line_id INT;
+    invoice_total NUMERIC(10, 2);
+BEGIN
+    -- 1. Select a random invoice from the last 90 days
+    SELECT "InvoiceId" INTO target_invoice_id
+    FROM "Invoice"
+    WHERE "InvoiceDate" >= CURRENT_DATE - INTERVAL '90 days'
+    ORDER BY RANDOM()
+    LIMIT 1;
+
+    -- If no invoice is found, do nothing.
+    IF target_invoice_id IS NULL THEN
+        RAISE NOTICE 'No invoices found in last 90 days to update.';
+        RETURN;
+    END IF;
+
+    -- 2. Select a new track that is not already in the invoice
+    SELECT "TrackId", "UnitPrice" INTO new_track_id, new_track_price
+    FROM "Track"
+    WHERE "TrackId" NOT IN (SELECT "TrackId" FROM "InvoiceLine" WHERE "InvoiceId" = target_invoice_id)
+    ORDER BY RANDOM()
+    LIMIT 1;
+
+    -- If no new track can be added (e.g., invoice already has all tracks), do nothing.
+    IF new_track_id IS NULL THEN
+        RAISE NOTICE 'No new tracks could be added to InvoiceId %.', target_invoice_id;
+        RETURN;
+    END IF;
+
+    -- 3. Get the next ID for the InvoiceLine using the sequence
+    new_invoice_line_id := nextval('invoice_line_id_seq');
+
+    -- 4. Insert the new item into the invoice
+    INSERT INTO "InvoiceLine" ("InvoiceLineId", "InvoiceId", "TrackId", "UnitPrice", "Quantity")
+    VALUES (new_invoice_line_id, target_invoice_id, new_track_id, new_track_price, 1);
+
+    -- 5. Recalculate the invoice total
+    SELECT SUM("UnitPrice" * "Quantity") INTO invoice_total
+    FROM "InvoiceLine"
+    WHERE "InvoiceId" = target_invoice_id;
+
+    -- 6. Update the total in the Invoice table
+    UPDATE "Invoice"
+    SET "Total" = invoice_total
+    WHERE "InvoiceId" = target_invoice_id;
+
+    RAISE NOTICE 'Updated InvoiceId % by adding TrackId %.', target_invoice_id, new_track_id;
+END;
+$$ LANGUAGE plpgsql;
+
+-- =============================================================================
+-- FUNCTION: simulate_delete_sale(simulation_date TIMESTAMP)
+-- =============================================================================
+--
+-- DESCRIPTION:
+--   Simulates deleting (canceling) an invoice completely.
+--   This represents a customer canceling their entire order.
+--   Operates on invoices within a 90-day window, simulating real-world
+--   return and cancellation policies.
+--
+-- PARAMETERS:
+--   simulation_date (TIMESTAMP): Not used for filtering (kept for API compatibility).
+--
+-- RETURNS:
+--   VOID
+--
+-- LOGIC:
+--   1. Selects a random invoice from the last 90 days.
+--   2. Deletes all associated InvoiceLines.
+--   3. Deletes the Invoice record itself.
+--
+-- =============================================================================
+
+CREATE OR REPLACE FUNCTION simulate_delete_sale(simulation_date TIMESTAMP)
+RETURNS VOID AS $$
+DECLARE
+    target_invoice_id INT;
+BEGIN
+    -- 1. Select a random invoice from the last 90 days to delete
+    SELECT "InvoiceId" INTO target_invoice_id
+    FROM "Invoice"
+    WHERE "InvoiceDate" >= CURRENT_DATE - INTERVAL '90 days'
+    ORDER BY RANDOM()
+    LIMIT 1;
+
+    -- If no invoice is found, do nothing.
+    IF target_invoice_id IS NULL THEN
+        RAISE NOTICE 'No invoices found in last 90 days to delete.';
+        RETURN;
+    END IF;
+
+    -- 2. Delete the invoice lines.
+    -- While ON DELETE CASCADE could handle this, being explicit is safer.
+    DELETE FROM "InvoiceLine"
+    WHERE "InvoiceId" = target_invoice_id;
+
+    -- 3. Delete the invoice itself
+    DELETE FROM "Invoice"
+    WHERE "InvoiceId" = target_invoice_id;
+
+    RAISE NOTICE 'Deleted InvoiceId % and its lines.', target_invoice_id;
 END;
 $$ LANGUAGE plpgsql;
