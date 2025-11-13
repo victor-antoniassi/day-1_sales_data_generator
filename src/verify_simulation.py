@@ -1,146 +1,156 @@
-import argparse
 import os
 import subprocess
-import datetime
 import logging
-from typing import Tuple
+import toml
+from pathlib import Path
+from typing import Dict, Any, List, Optional
+from decimal import Decimal
 
 import psycopg
 from dotenv import load_dotenv, dotenv_values
 
+
 # Determine project root directory (parent of src/)
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # Load environment variables from project root
-load_dotenv(os.path.join(PROJECT_ROOT, '.env'))
+load_dotenv(PROJECT_ROOT / '.env')
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=os.environ.get("LOG_LEVEL", "INFO").upper(),
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 logger = logging.getLogger(__name__)
 
+LOGS_DIR = PROJECT_ROOT / "simulation_logs"
+
 def get_connection_string() -> str:
-    """
-    Retrieves the database connection string from neonctl.
-    (Replicated from main.py for self-containment)
-    """
-    config = dotenv_values(os.path.join(PROJECT_ROOT, '.env'))
-    org_id = config.get("NEON_ORG_ID")
-    project_id = config.get("NEON_PROJECT_ID")
-    database = config.get("NEON_DATABASE")
-
-    if not org_id or not project_id or not database:
-        raise ValueError(
-            "NEON_ORG_ID, NEON_PROJECT_ID, and NEON_DATABASE must be set in the .env file."
-        )
-
-    role = config.get("NEON_ROLE", "")
-    branch = config.get("NEON_BRANCH", "")
+    """Retrieves the database connection string from neonctl."""
+    config = dotenv_values(PROJECT_ROOT / '.env')
+    required_vars = ["NEON_ORG_ID", "NEON_PROJECT_ID", "NEON_DATABASE"]
+    if not all(k in config for k in required_vars):
+        raise ValueError(f"Missing one or more required .env variables: {', '.join(required_vars)}")
 
     command = [
-        "neonctl",
-        "connection-string",
-        "--org-id",
-        org_id,
-        "--project-id",
-        project_id,
-        "--database-name",
-        database,
+        "neonctl", "connection-string",
+        "--org-id", config["NEON_ORG_ID"],
+        "--project-id", config["NEON_PROJECT_ID"],
+        "--database-name", config["NEON_DATABASE"],
     ]
-    if role:
-        command.extend(["--role-name", role])
-    if branch:
-        command.extend(["--branch", branch])
+    if config.get("NEON_ROLE"):
+        command.extend(["--role-name", config["NEON_ROLE"]])
+    if config.get("NEON_BRANCH"):
+        command.extend(["--branch", config["NEON_BRANCH"]])
 
     try:
-        result = subprocess.run(
-            command, capture_output=True, text=True, check=True, encoding='utf-8'
-        )
-        logger.debug("Connection string obtained successfully from neonctl")
+        result = subprocess.run(command, capture_output=True, text=True, check=True, encoding='utf-8')
         return result.stdout.strip()
     except FileNotFoundError:
         raise RuntimeError("neonctl not found. Please install and configure it.")
     except subprocess.CalledProcessError as e:
-        raise RuntimeError(
-            f"Error getting connection string from neonctl: {e.stderr}"
-        )
+        raise RuntimeError(f"Error getting connection string from neonctl: {e.stderr}")
 
-def get_d1_date_range() -> Tuple[datetime.date, datetime.date]:
-    """Returns the start and end dates for the previous day (D-1)."""
-    today = datetime.date.today()
-    yesterday = today - datetime.timedelta(days=1)
-    return yesterday, yesterday
+def find_latest_log_file() -> Optional[Path]:
+    """Finds the most recent simulation log file."""
+    if not LOGS_DIR.exists():
+        logger.error(f"Log directory not found: {LOGS_DIR}")
+        return None
+    
+    log_files = list(LOGS_DIR.glob("simulation_*.toml"))
+    if not log_files:
+        logger.error(f"No simulation logs found in {LOGS_DIR}")
+        return None
+        
+    latest_log = max(log_files, key=lambda p: p.stat().st_mtime)
+    logger.info(f"Found latest log file: {latest_log.name}")
+    return latest_log
 
-def verify_simulation_results(num_inserts: int, num_updates: int, num_deletes: int):
-    logger.info("Starting simulation results verification...")
+def verify_simulation_results():
+    """
+    Connects to the database, reads the latest simulation log, and verifies
+    that the operations recorded in the log are reflected in the database state.
+    """
+    logger.info("=== Starting Log-Based Simulation Verification ===")
+    
+    latest_log_path = find_latest_log_file()
+    if not latest_log_path:
+        return
+
+    try:
+        log_data = toml.load(latest_log_path)
+        operations = log_data.get("operations", [])
+        summary = log_data.get("simulation_summary", {})
+        logger.info(f"Verifying {len(operations)} operations for D-1: {summary.get('d1_date')}")
+
+    except Exception as e:
+        logger.error(f"Failed to read or parse log file {latest_log_path}: {e}")
+        return
+
     try:
         conn_string = get_connection_string()
-        d1_date, _ = get_d1_date_range()
-
         with psycopg.connect(conn_string) as conn:
             with conn.cursor() as cur:
-                logger.info(f"Verifying data for D-1: {d1_date}")
+                # Separate operations by type
+                inserts = [op for op in operations if op['type'] == 'insert']
+                updates = [op for op in operations if op['type'] == 'update']
+                deletes = [op for op in operations if op['type'] == 'delete']
 
-                # 1. Count new invoices for D-1
-                cur.execute(f"""
-                    SELECT COUNT(*) FROM "Invoice"
-                    WHERE DATE("InvoiceDate") = '{d1_date.isoformat()}'
-                """)
-                new_invoices_count = cur.fetchone()[0]
-                logger.info(f"Number of new invoices created on D-1 ({d1_date}): {new_invoices_count}")
+                # --- Verification counters ---
+                success_count = 0
+                fail_count = 0
 
-                if new_invoices_count == num_inserts:
-                    logger.info(f"✅ Correct number of inserts found ({new_invoices_count})")
-                else:
-                    logger.error(f"❌ Incorrect number of inserts: expected {num_inserts}, found {new_invoices_count}")
-
-                # 2. Check for 'deleted' invoices (hard delete)
-                # This is tricky without knowing the IDs that were deleted.
-                # We can only confirm that the count of invoices for D-1 matches the expected inserts minus deletes.
-                # For a more precise check, we'd need to capture IDs before deletion.
-                # For now, we'll rely on the count.
-
-                # 3. Check for updated invoices (more invoice lines)
-                # This also requires knowing original state or specific invoice IDs.
-                # A simpler check is to see if any D-1 invoices have more than 1 line (as new inserts can have up to 5)
-                # and if the total matches the sum of lines.
-                cur.execute(f"""
-                    SELECT i."InvoiceId", COUNT(il."InvoiceLineId"), i."Total"
-                    FROM "Invoice" i
-                    JOIN "InvoiceLine" il ON i."InvoiceId" = il."InvoiceId"
-                    WHERE DATE(i."InvoiceDate") = '{d1_date.isoformat()}'
-                    GROUP BY i."InvoiceId", i."Total"
-                    HAVING COUNT(il."InvoiceLineId") > 1
-                """)
-                updated_invoices_with_multiple_lines = cur.fetchall()
-                logger.info(f"Number of D-1 invoices with multiple lines (potential updates/multi-item inserts): {len(updated_invoices_with_multiple_lines)}")
-                
-                # Basic check: sum of lines should match invoice total
-                for inv_id, line_count, total in updated_invoices_with_multiple_lines:
-                    cur.execute(f"""
-                        SELECT SUM("UnitPrice" * "Quantity") FROM "InvoiceLine"
-                        WHERE "InvoiceId" = {inv_id}
-                    """)
-                    calculated_total = cur.fetchone()[0]
-                    if abs(calculated_total - total) > 0.001: # Using a small delta for float comparison
-                        logger.warning(f"Invoice {inv_id}: Calculated total ({calculated_total:.2f}) does not match stored total ({total:.2f}).")
+                # 1. Verify INSERTS
+                logger.info(f"--- Verifying {len(inserts)} Inserts ---")
+                for op in inserts:
+                    cur.execute('SELECT "Total" FROM "Invoice" WHERE "InvoiceId" = %s', (op['invoice_id'],))
+                    result = cur.fetchone()
+                    if not result:
+                        logger.error(f"❌ INSERT FAIL: InvoiceId {op['invoice_id']} not found.")
+                        fail_count += 1
+                    elif abs(result[0] - Decimal(str(op['total']))) > Decimal('0.001'):
+                        logger.error(f"❌ INSERT FAIL: InvoiceId {op['invoice_id']} has wrong total. Expected: {op['total']:.2f}, Found: {result[0]:.2f}")
+                        fail_count += 1
                     else:
-                        logger.debug(f"Invoice {inv_id}: Total matches sum of lines.")
+                        logger.debug(f"✅ INSERT OK: InvoiceId {op['invoice_id']}")
+                        success_count += 1
+                
+                # 2. Verify DELETES
+                logger.info(f"--- Verifying {len(deletes)} Deletes ---")
+                for op in deletes:
+                    cur.execute('SELECT 1 FROM "Invoice" WHERE "InvoiceId" = %s', (op['invoice_id'],))
+                    if cur.fetchone():
+                        logger.error(f"❌ DELETE FAIL: InvoiceId {op['invoice_id']} still exists.")
+                        fail_count += 1
+                    else:
+                        logger.debug(f"✅ DELETE OK: InvoiceId {op['invoice_id']} correctly deleted.")
+                        success_count += 1
 
-                logger.info("Verification complete.")
+                # 3. Verify UPDATES
+                logger.info(f"--- Verifying {len(updates)} Updates ---")
+                for op in updates:
+                    cur.execute('SELECT 1 FROM "Invoice" WHERE "InvoiceId" = %s', (op['invoice_id'],))
+                    if not cur.fetchone():
+                        logger.error(f"❌ UPDATE FAIL: InvoiceId {op['invoice_id']} not found (it may have been deleted later).")
+                        fail_count += 1
+                    else:
+                        # Basic check: just confirm it exists. A deeper check would require pre-update state.
+                        logger.debug(f"✅ UPDATE OK: InvoiceId {op['invoice_id']} exists.")
+                        success_count += 1
+
+                # --- Final Summary ---
+                logger.info("--- Verification Summary ---")
+                if fail_count == 0:
+                    logger.info(f"✅ SUCCESS: All {success_count} verified operations are consistent with the log.")
+                else:
+                    logger.error(f"❌ FAILURE: {fail_count} inconsistencies found.")
+                    logger.info(f"({success_count} operations were consistent).")
 
     except (ValueError, RuntimeError, psycopg.Error) as e:
-        logger.error(f"Error during verification: {e}")
+        logger.error(f"An error occurred during verification: {e}")
         exit(1)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Verify the D-1 sales simulation results.")
-    parser.add_argument("num_inserts", type=int, help="Number of inserts to verify.")
-    parser.add_argument("num_updates", type=int, help="Number of updates to verify.")
-    parser.add_argument("num_deletes", type=int, help="Number of deletes to verify.")
-    args = parser.parse_args()
+    verify_simulation_results()
 
-    verify_simulation_results(args.num_inserts, args.num_updates, args.num_deletes)

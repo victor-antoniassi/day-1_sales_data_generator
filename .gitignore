@@ -16,3 +16,6 @@ wheels/
 .claude
 .gemini
 .clinerules
+
+# Logs
+simulation_logs/

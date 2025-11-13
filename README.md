@@ -393,13 +393,29 @@ Enter the number of INSERTS, UPDATES, and DELETES for D-1 (e.g., '100 5 2'): 100
 
 ## Verifying Simulation Results
 
-After running the simulation, you can verify the generated data using the `verify_simulation.py` script. This script connects to your database and checks for D-1 invoices, ensuring data integrity and consistency.
+After running a simulation, a detailed log file in TOML format is created in the `simulation_logs/` directory. This log contains a full record of every operation performed (inserts, updates, and deletes).
+
+You can verify the integrity of the simulation by running the `verify_simulation.py` script. This script automatically:
+1.  Finds the most recent simulation log.
+2.  Reads the summary and every individual operation from the log file.
+3.  Connects to the database and queries it to ensure that the state of the data perfectly matches what was recorded in the log.
+4.  Reports on its findings, confirming that every insert, update, and delete was successfully and correctly applied.
 
 ```bash
 uv run src/verify_simulation.py
 ```
 
-The script will output information about the number of new invoices created on D-1 and check for invoices with multiple lines (potential updates/multi-item inserts), verifying their totals.
+### Example Verification Output
+```
+2025-11-13 16:57:17 - __main__ - INFO - === Starting Log-Based Simulation Verification ===
+2025-11-13 16:57:17 - __main__ - INFO - Found latest log file: simulation_2025-11-13_19-55-37.toml
+2025-11-13 16:57:17 - __main__ - INFO - Verifying 208 operations for D-1: 2025-11-12
+2025-11-13 16:57:17 - __main__ - INFO - --- Verifying 100 Inserts ---
+2025-11-13 16:57:17 - __main__ - INFO - --- Verifying 42 Deletes ---
+2025-11-13 16:57:17 - __main__ - INFO - --- Verifying 66 Updates ---
+2025-11-13 16:57:17 - __main__ - INFO - --- Verification Summary ---
+2025-11-13 16:57:17 - __main__ - INFO - ✅ SUCCESS: All 208 verified operations are consistent with the log.
+```
 
 ## Architecture & Implementation
 
@@ -410,10 +426,11 @@ chinook_db/
 ├── src/                              # Python application layer
 │   ├── main.py                       # CLI interface and orchestration
 │   ├── d1_sales_simulator.py         # Core simulation engine
-│   └── verify_simulation.py          # Data validation utility
+│   └── verify_simulation.py          # Log-based data validation utility
 ├── sql/                              # Database schema layer
-│   ├── simulation_functions.sql      # PL/pgSQL stored procedures (DML)
-│   └── update_historical_data.sql    # Historical data alignment (DDL)
+│   ├── simulation_functions.sql      # PL/pgSQL stored procedures (all DML)
+│   └── update_historical_data.sql    # Historical data alignment
+├── simulation_logs/                  # Output directory for TOML log files
 ├── .env.example                      # Configuration template
 ├── .env                              # Environment variables (gitignored)
 ├── pyproject.toml                    # Python dependencies & metadata

@@ -9,13 +9,19 @@ import datetime
 import random
 import logging
 import sys
-from typing import List, Tuple
+import os
+import toml
+from typing import List, Tuple, Dict, Any
 
 import psycopg
 from psycopg import sql
 
 # Logger will be configured by the entry point (main.py)
 logger = logging.getLogger(__name__)
+
+# Project root directory, assuming src is one level down
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+LOGS_DIR = os.path.join(PROJECT_ROOT, "simulation_logs")
 
 
 def validate_database_state(conn: psycopg.Connection) -> None:
@@ -65,28 +71,50 @@ def get_d1_date_range() -> Tuple[datetime.datetime, datetime.datetime]:
     return start_of_yesterday, end_of_yesterday
 
 
-def _perform_deletes(cur: psycopg.Cursor, num_deletes: int, simulation_date: datetime.datetime):
-    """Executes delete operations."""
+def _perform_deletes(cur: psycopg.Cursor, num_deletes: int, simulation_date: datetime.datetime) -> List[Dict[str, Any]]:
+    """Executes delete operations and returns a log of them."""
     if num_deletes == 0:
-        return
+        return []
     logger.info(f"Processing {num_deletes} DELETES...")
+    deleted_ops = []
     for i in range(num_deletes):
-        cur.execute("SELECT simulate_delete_sale(%s);", (simulation_date,))
-        logger.info(f"Progress: {i+1}/{num_deletes} deletes executed.")
+        cur.execute("SELECT simulate_delete_sale(%s);", (simulation_date.date(),))
+        deleted_id = cur.fetchone()[0]
+        if deleted_id:
+            deleted_ops.append({
+                "type": "delete",
+                "invoice_id": deleted_id,
+                "timestamp": simulation_date.isoformat()
+            })
+            logger.info(f"Progress: {i+1}/{num_deletes} deletes executed for InvoiceId {deleted_id}.")
+        else:
+            logger.warning(f"Progress: {i+1}/{num_deletes} - No suitable invoice found to delete.")
+    return deleted_ops
 
 
-def _perform_updates(cur: psycopg.Cursor, num_updates: int, simulation_date: datetime.datetime):
-    """Executes update operations."""
+def _perform_updates(cur: psycopg.Cursor, num_updates: int, simulation_date: datetime.datetime) -> List[Dict[str, Any]]:
+    """Executes update operations and returns a log of them."""
     if num_updates == 0:
-        return
+        return []
     logger.info(f"Processing {num_updates} UPDATES...")
+    updated_ops = []
     for i in range(num_updates):
-        cur.execute("SELECT simulate_update_sale(%s);", (simulation_date,))
-        logger.info(f"Progress: {i+1}/{num_updates} updates executed.")
+        cur.execute("SELECT simulate_update_sale(%s);", (simulation_date.date(),))
+        updated_id = cur.fetchone()[0]
+        if updated_id:
+            updated_ops.append({
+                "type": "update",
+                "invoice_id": updated_id,
+                "timestamp": simulation_date.isoformat()
+            })
+            logger.info(f"Progress: {i+1}/{num_updates} updates executed for InvoiceId {updated_id}.")
+        else:
+            logger.warning(f"Progress: {i+1}/{num_updates} - No suitable invoice found to update.")
+    return updated_ops
 
 
-def _perform_inserts(cur: psycopg.Cursor, num_inserts: int) -> List[Tuple[int, float]]:
-    """Generates and inserts new sales, returning their details."""
+def _perform_inserts(cur: psycopg.Cursor, num_inserts: int) -> List[Dict[str, Any]]:
+    """Generates and inserts new sales, returning a log of them."""
     if num_inserts == 0:
         return []
     
@@ -94,7 +122,7 @@ def _perform_inserts(cur: psycopg.Cursor, num_inserts: int) -> List[Tuple[int, f
     start_date, end_date = get_d1_date_range()
     time_diff_seconds = int((end_date - start_date).total_seconds())
     
-    results = []
+    inserted_ops = []
     for i in range(num_inserts):
         random_seconds = random.randint(0, time_diff_seconds)
         timestamp = start_date + datetime.timedelta(seconds=random_seconds)
@@ -106,7 +134,12 @@ def _perform_inserts(cur: psycopg.Cursor, num_inserts: int) -> List[Tuple[int, f
         result = cur.fetchone()
         if result:
             invoice_id, total = result
-            results.append((invoice_id, float(total)))
+            inserted_ops.append({
+                "type": "insert",
+                "invoice_id": invoice_id,
+                "total": float(total),
+                "timestamp": timestamp.isoformat()
+            })
             if num_inserts <= 10 or (i+1) % max(1, num_inserts // 10) == 0:
                 logger.info(
                     f"Progress: {i+1}/{num_inserts} ({ (i+1)*100//num_inserts }%) - "
@@ -114,7 +147,7 @@ def _perform_inserts(cur: psycopg.Cursor, num_inserts: int) -> List[Tuple[int, f
                 )
         else:
             logger.warning(f"Insert {i+1}/{num_inserts}: Function did not return data")
-    return results
+    return inserted_ops
 
 
 def process_operations_batch(
@@ -122,10 +155,9 @@ def process_operations_batch(
     num_inserts: int,
     num_updates: int,
     num_deletes: int
-) -> List[Tuple[int, float]]:
+) -> List[Dict[str, Any]]:
     """
-    Processes a batch of deletes, updates, and inserts in a single transaction.
-    The simulation date is based on the D-1 date range.
+    Processes a batch of deletes, updates, and inserts, returning a log of all operations.
     """
     start_date, _ = get_d1_date_range()
     simulation_date_for_mods = start_date # Use the start of D-1 for modification context
@@ -133,21 +165,53 @@ def process_operations_batch(
     logger.info(f"Starting batch operation for D-1 ({start_date.date()})")
     logger.info(f"Requested: {num_inserts} Inserts, {num_updates} Updates, {num_deletes} Deletes")
 
+    all_operations = []
     # Order of operations: Deletes -> Updates -> Inserts
-    _perform_deletes(cur, num_deletes, simulation_date_for_mods)
-    _perform_updates(cur, num_updates, simulation_date_for_mods)
-    insert_results = _perform_inserts(cur, num_inserts)
+    all_operations.extend(_perform_deletes(cur, num_deletes, simulation_date_for_mods))
+    all_operations.extend(_perform_updates(cur, num_updates, simulation_date_for_mods))
+    all_operations.extend(_perform_inserts(cur, num_inserts))
     
-    return insert_results
+    return all_operations
+
+
+def write_log_file(start_time: datetime.datetime, operations: List[Dict[str, Any]], d1_date: datetime.date):
+    """Writes the simulation operations to a TOML log file."""
+    os.makedirs(LOGS_DIR, exist_ok=True)
+    
+    log_filename = f"simulation_{start_time.strftime('%Y-%m-%d_%H-%M-%S')}.toml"
+    log_filepath = os.path.join(LOGS_DIR, log_filename)
+
+    summary = {
+        "inserts": sum(1 for op in operations if op['type'] == 'insert'),
+        "updates": sum(1 for op in operations if op['type'] == 'update'),
+        "deletes": sum(1 for op in operations if op['type'] == 'delete'),
+    }
+
+    log_data = {
+        "simulation_summary": {
+            "d1_date": d1_date.isoformat(),
+            "simulation_timestamp_utc": start_time.isoformat(),
+            "counts": summary
+        },
+        "operations": operations
+    }
+
+    try:
+        with open(log_filepath, "w", encoding="utf-8") as f:
+            toml.dump(log_data, f)
+        logger.info(f"Simulation log saved to: {log_filepath}")
+    except Exception as e:
+        logger.error(f"Failed to write log file: {e}")
 
 
 def start_simulation(conn_string: str, num_inserts: int, num_updates: int, num_deletes: int) -> None:
     """
     Main function to run the sales simulation.
-
-    Orchestrates connecting to the database, validating, and generating
-    and modifying sales data in a single transaction.
+    Orchestrates DB connection, validation, data generation, and logging.
     """
+    simulation_start_time = datetime.datetime.now(datetime.timezone.utc)
+    d1_date, _ = get_d1_date_range()
+    
     try:
         logger.info("=== D-1 Sales Simulator Starting ===")
         
@@ -159,16 +223,24 @@ def start_simulation(conn_string: str, num_inserts: int, num_updates: int, num_d
                 try:
                     logger.info("Starting batch operation in a SINGLE TRANSACTION...")
                     
-                    results = process_operations_batch(cur, num_inserts, num_updates, num_deletes)
+                    operations = process_operations_batch(cur, num_inserts, num_updates, num_deletes)
                     
                     logger.info("Batch successfully prepared. Committing transaction...")
                     conn.commit()
                     logger.info("SUCCESS: All operations committed to the database.")
-                    logger.info(f"Summary: {len(results)} new sales inserted, {num_updates} updated, {num_deletes} deleted.")
+                    
+                    # Write log file ONLY after successful commit
+                    write_log_file(simulation_start_time, operations, d1_date.date())
 
-                    if results:
-                        total_revenue = sum(total for _, total in results)
-                        avg_revenue = total_revenue / len(results)
+                    # Final summary
+                    inserts_results = [op for op in operations if op['type'] == 'insert']
+                    logger.info(f"Summary: {len(inserts_results)} new sales inserted, "
+                                f"{sum(1 for op in operations if op['type'] == 'update')} updated, "
+                                f"{sum(1 for op in operations if op['type'] == 'delete')} deleted.")
+
+                    if inserts_results:
+                        total_revenue = sum(op.get('total', 0) for op in inserts_results)
+                        avg_revenue = total_revenue / len(inserts_results)
                         logger.info(f"Total new revenue: ${total_revenue:.2f}")
                         logger.info(f"Average new sale: ${avg_revenue:.2f}")
 

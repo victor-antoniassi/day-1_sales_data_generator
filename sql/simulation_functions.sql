@@ -43,7 +43,7 @@ END
 $$;
 
 -- =============================================================================
--- FUNCTION: simulate_new_sale(p_invoice_date TIMESTAMP)
+-- FUNCTION: simulate_new_sale(p_invoice_date TIMESTAMP WITH TIME ZONE)
 -- =============================================================================
 --
 -- DESCRIPTION:
@@ -53,7 +53,7 @@ $$;
 --   encapsulating the entire sale creation process within a single function.
 --
 -- PARAMETERS:
---   p_invoice_date (TIMESTAMP): The exact timestamp to be used for the new
+--   p_invoice_date (TIMESTAMP WITH TIME ZONE): The exact timestamp to be used for the new
 --                               invoice. This allows the calling script to
 --                               control the temporal distribution of sales.
 --
@@ -75,7 +75,7 @@ $$;
 --
 -- =============================================================================
 
-CREATE OR REPLACE FUNCTION simulate_new_sale(p_invoice_date TIMESTAMP)
+CREATE OR REPLACE FUNCTION simulate_new_sale(p_invoice_date TIMESTAMP WITH TIME ZONE)
 RETURNS TABLE(generated_invoice_id INT, generated_total NUMERIC) AS $$
 DECLARE
     -- Variable declarations
@@ -83,11 +83,10 @@ DECLARE
     v_invoice_id INT;
     v_total_price NUMERIC := 0;
     v_num_items INT;
-    v_track_id INT;
-    v_unit_price NUMERIC;
     i INT;
     -- Array to prevent adding the same track twice to the same invoice
     v_track_ids_in_invoice INT[] := '{}';
+    v_track_info RECORD;
 BEGIN
     -- Step 1: Select a random customer
     SELECT "CustomerId" INTO v_customer_id
@@ -121,14 +120,14 @@ BEGIN
     FOR i IN 1..v_num_items LOOP
         -- Select a random track that has not already been added to this invoice
         SELECT "TrackId", "UnitPrice"
-        INTO v_track_id, v_unit_price
+        INTO v_track_info
         FROM "Track"
         WHERE "TrackId" NOT IN (SELECT unnest(v_track_ids_in_invoice))
         ORDER BY RANDOM()
         LIMIT 1;
 
         -- Store the added track ID to prevent duplicates in this invoice
-        v_track_ids_in_invoice := array_append(v_track_ids_in_invoice, v_track_id);
+        v_track_ids_in_invoice := array_append(v_track_ids_in_invoice, v_track_info."TrackId");
 
         -- Insert the new invoice item using SEQUENCE for ID generation
         INSERT INTO "InvoiceLine" (
@@ -137,13 +136,13 @@ BEGIN
         VALUES (
             nextval('invoice_line_id_seq'), -- SEQUENCE for concurrent-safe ID generation
             v_invoice_id,
-            v_track_id,
-            v_unit_price,
+            v_track_info."TrackId",
+            v_track_info."UnitPrice",
             1 -- Quantity is always 1 as per the Chinook data model
         );
 
         -- Accumulate the total price for the final update
-        v_total_price := v_total_price + v_unit_price;
+        v_total_price := v_total_price + v_track_info."UnitPrice";
     END LOOP;
 
     -- Step 6: Update the invoice with the correct, calculated total
@@ -158,49 +157,39 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- =============================================================================
--- FUNCTION: simulate_update_sale(simulation_date TIMESTAMP)
+-- FUNCTION: simulate_update_sale(simulation_date TIMESTAMP WITH TIME ZONE)
 -- =============================================================================
 --
 -- DESCRIPTION:
 --   Simulates updating an existing invoice by adding a new track to it.
 --   This represents a customer adding an additional item to their order.
---   Operates on invoices within a 90-day window, simulating real-world
---   return and order modification policies.
+--   Operates on invoices within a 90-day window.
 --
 -- PARAMETERS:
---   simulation_date (TIMESTAMP): Not used for filtering (kept for API compatibility).
+--   simulation_date (TIMESTAMP WITH TIME ZONE): The timestamp for the modification.
 --
 -- RETURNS:
---   VOID
---
--- LOGIC:
---   1. Selects a random invoice from the last 90 days.
---   2. Selects a random track not already in that invoice.
---   3. Adds the track as a new InvoiceLine.
---   4. Recalculates and updates the invoice total.
+--   INT: The ID of the updated invoice, or NULL if no invoice was updated.
 --
 -- =============================================================================
 
-CREATE OR REPLACE FUNCTION simulate_update_sale(simulation_date TIMESTAMP)
-RETURNS VOID AS $$
+CREATE OR REPLACE FUNCTION simulate_update_sale(simulation_date TIMESTAMP WITH TIME ZONE)
+RETURNS INT AS $$
 DECLARE
     target_invoice_id INT;
     new_track_id INT;
     new_track_price NUMERIC(10, 2);
-    new_invoice_line_id INT;
-    invoice_total NUMERIC(10, 2);
 BEGIN
-    -- 1. Select a random invoice from the last 90 days
+    -- 1. Select a random, non-cancelled invoice from the last 90 days
     SELECT "InvoiceId" INTO target_invoice_id
     FROM "Invoice"
-    WHERE "InvoiceDate" >= CURRENT_DATE - INTERVAL '90 days'
+    WHERE "InvoiceDate" >= (simulation_date::date - INTERVAL '90 days')
+      AND "Total" > 0
     ORDER BY RANDOM()
     LIMIT 1;
 
-    -- If no invoice is found, do nothing.
     IF target_invoice_id IS NULL THEN
-        RAISE NOTICE 'No invoices found in last 90 days to update.';
-        RETURN;
+        RETURN NULL;
     END IF;
 
     -- 2. Select a new track that is not already in the invoice
@@ -210,76 +199,57 @@ BEGIN
     ORDER BY RANDOM()
     LIMIT 1;
 
-    -- If no new track can be added (e.g., invoice already has all tracks), do nothing.
     IF new_track_id IS NULL THEN
-        RAISE NOTICE 'No new tracks could be added to InvoiceId %.', target_invoice_id;
-        RETURN;
+        RETURN NULL;
     END IF;
 
-    -- 3. Get the next ID for the InvoiceLine using the sequence
-    new_invoice_line_id := nextval('invoice_line_id_seq');
-
-    -- 4. Insert the new item into the invoice
+    -- 3. Insert the new item into the invoice
     INSERT INTO "InvoiceLine" ("InvoiceLineId", "InvoiceId", "TrackId", "UnitPrice", "Quantity")
-    VALUES (new_invoice_line_id, target_invoice_id, new_track_id, new_track_price, 1);
+    VALUES (nextval('invoice_line_id_seq'), target_invoice_id, new_track_id, new_track_price, 1);
 
-    -- 5. Recalculate the invoice total
-    SELECT SUM("UnitPrice" * "Quantity") INTO invoice_total
-    FROM "InvoiceLine"
-    WHERE "InvoiceId" = target_invoice_id;
-
-    -- 6. Update the total in the Invoice table
+    -- 4. Recalculate and update the total in the Invoice table
     UPDATE "Invoice"
-    SET "Total" = invoice_total
+    SET "Total" = (SELECT SUM("UnitPrice" * "Quantity") FROM "InvoiceLine" WHERE "InvoiceId" = target_invoice_id)
     WHERE "InvoiceId" = target_invoice_id;
 
-    RAISE NOTICE 'Updated InvoiceId % by adding TrackId %.', target_invoice_id, new_track_id;
+    RETURN target_invoice_id;
 END;
 $$ LANGUAGE plpgsql;
 
 -- =============================================================================
--- FUNCTION: simulate_delete_sale(simulation_date TIMESTAMP)
+-- FUNCTION: simulate_delete_sale(simulation_date TIMESTAMP WITH TIME ZONE)
 -- =============================================================================
 --
 -- DESCRIPTION:
 --   Simulates deleting (canceling) an invoice completely.
---   This represents a customer canceling their entire order.
---   Operates on invoices within a 90-day window, simulating real-world
---   return and cancellation policies.
+--   Operates on invoices within a 90-day window.
 --
 -- PARAMETERS:
---   simulation_date (TIMESTAMP): Not used for filtering (kept for API compatibility).
+--   simulation_date (TIMESTAMP WITH TIME ZONE): The timestamp for the modification.
 --
 -- RETURNS:
---   VOID
---
--- LOGIC:
---   1. Selects a random invoice from the last 90 days.
---   2. Deletes all associated InvoiceLines.
---   3. Deletes the Invoice record itself.
+--   INT: The ID of the deleted invoice, or NULL if no invoice was deleted.
 --
 -- =============================================================================
 
-CREATE OR REPLACE FUNCTION simulate_delete_sale(simulation_date TIMESTAMP)
-RETURNS VOID AS $$
+CREATE OR REPLACE FUNCTION simulate_delete_sale(simulation_date TIMESTAMP WITH TIME ZONE)
+RETURNS INT AS $$
 DECLARE
     target_invoice_id INT;
 BEGIN
-    -- 1. Select a random invoice from the last 90 days to delete
+    -- 1. Select a random, non-cancelled invoice from the last 90 days to delete
     SELECT "InvoiceId" INTO target_invoice_id
     FROM "Invoice"
-    WHERE "InvoiceDate" >= CURRENT_DATE - INTERVAL '90 days'
+    WHERE "InvoiceDate" >= (simulation_date::date - INTERVAL '90 days')
+      AND "Total" > 0
     ORDER BY RANDOM()
     LIMIT 1;
 
-    -- If no invoice is found, do nothing.
     IF target_invoice_id IS NULL THEN
-        RAISE NOTICE 'No invoices found in last 90 days to delete.';
-        RETURN;
+        RETURN NULL;
     END IF;
 
-    -- 2. Delete the invoice lines.
-    -- While ON DELETE CASCADE could handle this, being explicit is safer.
+    -- 2. Delete the invoice lines
     DELETE FROM "InvoiceLine"
     WHERE "InvoiceId" = target_invoice_id;
 
@@ -287,6 +257,6 @@ BEGIN
     DELETE FROM "Invoice"
     WHERE "InvoiceId" = target_invoice_id;
 
-    RAISE NOTICE 'Deleted InvoiceId % and its lines.', target_invoice_id;
+    RETURN target_invoice_id;
 END;
 $$ LANGUAGE plpgsql;
