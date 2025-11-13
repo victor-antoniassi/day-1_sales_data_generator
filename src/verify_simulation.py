@@ -1,3 +1,4 @@
+import argparse
 import os
 import subprocess
 import datetime
@@ -73,7 +74,7 @@ def get_d1_date_range() -> Tuple[datetime.date, datetime.date]:
     yesterday = today - datetime.timedelta(days=1)
     return yesterday, yesterday
 
-def verify_simulation_results():
+def verify_simulation_results(num_inserts: int, num_updates: int, num_deletes: int):
     logger.info("Starting simulation results verification...")
     try:
         conn_string = get_connection_string()
@@ -90,6 +91,11 @@ def verify_simulation_results():
                 """)
                 new_invoices_count = cur.fetchone()[0]
                 logger.info(f"Number of new invoices created on D-1 ({d1_date}): {new_invoices_count}")
+
+                if new_invoices_count == num_inserts:
+                    logger.info(f"✅ Correct number of inserts found ({new_invoices_count})")
+                else:
+                    logger.error(f"❌ Incorrect number of inserts: expected {num_inserts}, found {new_invoices_count}")
 
                 # 2. Check for 'deleted' invoices (hard delete)
                 # This is tricky without knowing the IDs that were deleted.
@@ -131,4 +137,10 @@ def verify_simulation_results():
         exit(1)
 
 if __name__ == "__main__":
-    verify_simulation_results()
+    parser = argparse.ArgumentParser(description="Verify the D-1 sales simulation results.")
+    parser.add_argument("num_inserts", type=int, help="Number of inserts to verify.")
+    parser.add_argument("num_updates", type=int, help="Number of updates to verify.")
+    parser.add_argument("num_deletes", type=int, help="Number of deletes to verify.")
+    args = parser.parse_args()
+
+    verify_simulation_results(args.num_inserts, args.num_updates, args.num_deletes)
